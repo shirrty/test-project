@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>AnythingLLM 文档上传</title>
+</head>
+<body>
+<h3>上传文档到第一个工作区</h3>
+<input type="file" id="file">
+<button onclick="upload()">上传</button>
+<pre id="result"></pre>
+
+<script>
+const BASE = 'http://localhost:3001/api';
+const KEY = '2P5JPJD-QH44F42-HQAMW7H-WG63808';
+const headers = { 'Authorization': 'Bearer ' + KEY };
+
+async function firstWorkspace() {
+  const res = await fetch(BASE + '/v1/workspaces', { headers });
+  const data = await res.json();
+  const ws = Array.isArray(data) ? data : data.workspaces;
+  if (!ws || !ws.length) throw new Error('没有可用工作区');
+  return ws[0].slug;
+}
+
+async function upload() {
+  const f = document.getElementById('file').files[0];
+  const out = document.getElementById('result');
+  if (!f) { out.textContent = '请先选择文件'; return; }
+  try {
+    const slug = await firstWorkspace();
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('addToWorkspaces', slug);
+    const res = await fetch(BASE + '/v1/document/upload', {
+      method: 'POST',
+      headers,
+      body: fd
+    });
+    const json = await res.json();
+    out.textContent = '上传成功，已加入工作区并开始向量化嵌入:\n' +
+      JSON.stringify(json, null, 2);
+  } catch (e) {
+    out.textContent = '出错: ' + e.message;
+  }
+}
+</script>
+</body>
+</html>

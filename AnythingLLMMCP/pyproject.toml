@@ -1,0 +1,24 @@
+[project]
+name = "anythingllm-mcp"
+version = "0.1.0"
+description = "企业文档AI向量管理系统 - 基于 MCP 对接 AnythingLLM"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.2.0",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+anythingllm-mcp = "anythingllm_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["anythingllm_mcp*"]

@@ -1,0 +1,23 @@
+[project]
+name = "pet-hospital-mcp"
+version = "0.1.0"
+description = "宠爱AI病历管理系统 - 基于 MCP 协议的宠物医院病历管理工具"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2.2.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+pet-hospital-mcp = "pet_hospital_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pet_hospital_mcp*"]
