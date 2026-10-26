@@ -24,6 +24,8 @@ model = config["llm"]["model"]
 
 # 百度千帆智能搜索生成 API（key 从 config.ini [search] 小节读取，禁止硬编码）
 SEARCH_API = "https://qianfan.baidubce.com/v2/ai_search/chat/completions"
+# 总结用的模型：不传该参数时接口只返回搜索来源，不做智能总结
+SEARCH_MODEL = "ernie-4.5-turbo-32k"
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 MAX_TOOL_OUTPUT = 2000
@@ -110,6 +112,7 @@ def searchWeb(query=None, **kwargs):
             headers={"Authorization": f"Bearer {search_key}"},
             json={
                 "messages": [{"role": "user", "content": query}],
+                "model": SEARCH_MODEL,
                 "search_source": "baidu_search_v2",
                 "resource_type_filter": [{"type": "web", "top_k": 4}],
                 "stream": False,
