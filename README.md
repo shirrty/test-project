@@ -3,7 +3,7 @@
 个人 LLM 开发实践仓库，主题不再局限于 MCP：既包含基于
 [MCP](https://modelcontextprotocol.io)（Model Context Protocol）与
 [AnythingLLM](https://anythingllm.io) 的知识库与工具封装实验，也包含不依赖任何框架的
-Agent 流式对话与工具调用入门练习，共五个相互独立的小项目：
+Agent 流式对话与工具调用入门练习，共六个相互独立的小项目：
 
 | 目录 | 说明 | 技术栈 |
 | --- | --- | --- |
@@ -12,6 +12,7 @@ Agent 流式对话与工具调用入门练习，共五个相互独立的小项�
 | [`PetHospitalMCP/`](PetHospitalMCP/) | 把既有 Go 宠物医院 REST API 适配成无状态 MCP 服务 | Python · MCP SDK 2.x · Pydantic · pytest |
 | [`Agent/Practice01/`](Agent/Practice01/) | 最小流式对话练习：直接调用 OpenAI 兼容接口逐字输出回答 | Python · requests |
 | [`Agent/Practice02/`](Agent/Practice02/) | 工具调用（function calling）练习：日期/闰年计算 + 本地文件目录读写改删，附 Mermaid 架构图 | Python · requests |
+| [`Agent/xAgent/`](Agent/xAgent/) | 联网 Agent 练习：联网搜索 + 网页正文抓取 + 本地命令执行三个工具 | Python · requests · trafilatura |
 
 > 目录名 `AnythingLLMServer` 为历史遗留拼写（`shangchuanwangye` = 上传网页），
 > 为避免破坏既有链接予以保留。
@@ -52,10 +53,13 @@ Agent 流式对话与工具调用入门练习，共五个相互独立的小项�
 - **Agent/Practice02** 在 Practice01 的基础上引入 **function calling**：模型按需调用
   `getdate`（执行本地 `date` / `time` 命令）、`isLeapYear` 与 10 个本地文件工具，
   本地执行结果回填 `tool` 消息后继续对话，是「模型 → 工具 → 模型」的最小闭环。
+- **Agent/xAgent** 延续 Practice02 的 function calling 框架，把工具从本地扩展到互联网：
+  `searchWeb`（百度千帆智能搜索生成 API）、`fetchWeb`（curl 抓取 + trafilatura 提取正文转
+  Markdown）与 `RunCli`（参数列表方式执行本地命令），使模型能先获取实时信息再回答。
 
 ## 快速上手
 
-五个项目互相独立，按需选择其一安装。
+六个项目互相独立，按需选择其一安装。
 
 ### 1. AnythingLLMMCP
 
@@ -183,6 +187,44 @@ python file_chat.py
   `delete_dir` 拒绝删除当前工作目录与磁盘根目录；读写仅支持纯文本文件。
   请在自己的练习目录下运行，避免让模型误删重要数据。
 
+### 6. Agent/xAgent
+
+在 Practice02 框架上新增三个联网 / 系统工具，`config.ini` 在 `[llm]` 之外
+多一个 `[search]` 小节（存放百度千帆智能搜索的 API Key，同样被忽略、不上传）：
+
+| 工具 | 说明 |
+| --- | --- |
+| `searchWeb` | 调用百度千帆智能搜索生成 API，返回智能总结与参考来源（标题 + URL），需要实时信息时使用 |
+| `fetchWeb` | 参数列表方式调用本地 `curl` 抓取网页（不用 `shell=True`），`trafilatura` 提取正文转 Markdown（保留标题、段落、列表、表格、链接，去除导航/广告/页脚） |
+| `RunCli` | 参数列表 + `shell=False` 执行本地命令，返回 stdout / stderr / 退出码，60 秒超时，超长输出截断并标明 |
+
+```powershell
+cd Agent/xAgent
+pip install requests trafilatura
+
+# 复制模板并填写密钥（config.ini 已被 .gitignore 忽略，不会上传）
+copy config.example.ini config.ini
+python chat.py
+```
+
+`config.ini` 格式：
+
+```ini
+[llm]
+base_url = https://api.siliconflow.cn/v1
+api_key = <你的 API Key>
+model = Qwen/Qwen3-8B
+
+[search]
+; 百度千帆智能搜索 API Key
+; 文档：https://cloud.baidu.com/doc/qianfan-api/s/Hmbu8m06u
+baidu_qianfan_api_key = <百度千帆 API Key>
+```
+
+常用示例：`今天有什么科技新闻`、`帮我读一下 https://blog.python.org/ 讲了什么`、
+`用 RunCli 看看 python 的版本`。未配置搜索 key 时 `searchWeb` 会把缺配置的清晰
+错误回传给模型重试，不影响其余两个工具。
+
 ## 环境依赖一览
 
 | 项目 | Python | 关键依赖 | 外部服务 |
@@ -192,17 +234,21 @@ python file_chat.py
 | PetHospitalMCP | 3.11+ | `mcp==2.0.0`、`httpx`、`pydantic` | Go 宠物医院 API（:8080） |
 | Agent/Practice01 | 3.8+ | `requests` | SiliconFlow 等 OpenAI 兼容 API |
 | Agent/Practice02 | 3.8+ | `requests` | SiliconFlow 等 OpenAI 兼容 API |
+| Agent/xAgent | 3.8+ | `requests`、`trafilatura`、本机 `curl` | SiliconFlow 等 OpenAI 兼容 API、百度千帆智能搜索 |
 
 ## 安全说明
 
 - 仓库**不包含任何 API Key**。密钥一律通过环境变量（`AnythingLLMMCP`）、
-  页面输入框（上传网页）或本地 `config.ini`（`Agent/Practice01`、`Agent/Practice02`，均已被忽略）提供。
+  页面输入框（上传网页）或本地 `config.ini`（`Agent/Practice01`、`Agent/Practice02`、
+  `Agent/xAgent`，均已被忽略）提供。
 - `.env`、`.venv/`、`__pycache__/`、`*.egg-info/`、`*.log`、`config.ini`
   均已在 `.gitignore` 中排除。
 - 前三个项目的本地服务均**只监听 127.0.0.1**，属于本机教学/实验用途：
   `PetHospitalMCP` 明确不做认证、权限与 CORS / Origin 校验，
   **请勿直接暴露到公网**；`Agent/Practice01` 只作为出站客户端访问外部 API，
   `Agent/Practice02` 除出站请求外还会按对话指令创建、编辑、改名、删除本地文件与目录，
+  请只在自己的练习目录下运行。
+- `Agent/xAgent` 的 `RunCli` 会按对话指令**执行任意本地命令**（教学练习，未设白名单与审批），
   请只在自己的练习目录下运行。
 - `PetHospitalMCP` 的日志会对 `ownerPhone` / `ownerAddr` / `chipNo`
   （含 snake_case 写法）在任意嵌套层级递归脱敏。
