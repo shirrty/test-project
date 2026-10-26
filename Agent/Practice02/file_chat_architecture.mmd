@@ -1,0 +1,100 @@
+%% file_chat.py 代码架构图（Mermaid flowchart）
+flowchart TD
+    START["python file_chat.py"] --> GUARD["__main__ 保护<br/>捕获 EOFError"]
+    GUARD --> CFG["加载 config.ini<br/>base_url / api_key / model"]
+    GUARD --> SCHEMA["TOOLS 工具 Schema 定义<br/>getdate / isLeapYear / 10 个本地文件工具"]
+    GUARD --> MAIN["main() 对话主循环"]
+
+    MAIN --> PROMPT["打印提示：你好，请提出你的问题"]
+    PROMPT --> INPUT["input() 读取问题<br/>追加 user 消息"]
+    INPUT --> ROUND{"轮次判断<br/>轮数 ≤ 10"}
+
+    ROUND -->|"是"| STREAM["stream_once(messages)<br/>POST /chat/completions，stream=True"]
+    ROUND -->|"轮次用尽"| PROMPT
+
+    STREAM --> REQERR{"请求异常?"}
+    REQERR -->|"是"| PRINTERR["打印：请求出错"] --> PROMPT
+    REQERR -->|"否"| SSE["SSE 流解析<br/>buffer 按行拆分 data: 前缀"]
+
+    SSE --> CONTENT["delta.content<br/>出现 tool_calls 后忽略残余碎片"]
+    SSE --> TCCOLLECT["delta.tool_calls<br/>按 index 合并 id / name / arguments"]
+    SSE --> DONE{"data: [DONE]?"}
+    DONE -->|"是"| APPEND
+    DONE -->|"否"| SSE
+
+    CONTENT --> APPEND["组装 assistant 消息<br/>content + tool_calls"]
+    TCCOLLECT --> APPEND
+
+    APPEND --> HASCALL{"存在 tool_calls?"}
+    HASCALL -->|"否"| PROMPT
+    HASCALL -->|"是"| PARSE["parse_arguments(arguments)<br/>raw_decode 取第一个完整 JSON，容忍尾部碎片<br/>失败则回传错误让模型重试"]
+
+    PARSE --> DISPATCH["call_tool(name, arguments)<br/>查 TOOL_HANDLERS 分发表"]
+    DISPATCH --> UNKNOWN["未知工具：返回提示字符串"]
+
+    DISPATCH --> HANDLERS{"TOOL_HANDLERS 分发"}
+    HANDLERS --> T1["getdate()<br/>subprocess 调用本地 date / time<br/>decode_console 按 cp936 解码"]
+    HANDLERS --> T2["isLeapYear()<br/>python 代码判定闰年"]
+    HANDLERS --> T3["getcwd()<br/>os.getcwd()"]
+    HANDLERS --> T4["list_dir(path)<br/>os.listdir + os.path 判断类型/大小"]
+    HANDLERS --> T5["get_file_type(path)<br/>mimetypes + is_text_file 二进制探测"]
+    HANDLERS --> T6["read_file(path)<br/>read_text 读纯文本，自动识别编码"]
+    HANDLERS --> T7["create_file(dir, filename)<br/>os.makedirs + open 写入"]
+    HANDLERS --> T8["edit_file(path, old_text, content)<br/>整篇覆盖或替换 1 处"]
+    HANDLERS --> T9["create_dir(path)<br/>os.makedirs"]
+    HANDLERS --> T10["delete_dir(path)<br/>shutil.rmtree，拒绝删除 cwd/盘根"]
+    HANDLERS --> T11["delete_file(path)<br/>os.remove"]
+    HANDLERS --> T12["rename_path(path, new_name)<br/>os.rename 文件/目录原地改名"]
+
+    T1 --> RES
+    T2 --> RES
+    T3 --> RES
+    T4 --> RES
+    T5 --> RES
+    T6 --> RES
+    T7 --> RES
+    T8 --> RES
+    T9 --> RES
+    T10 --> RES
+    T11 --> RES
+    T12 --> RES
+
+    TOOLEXIT["工具执行正常返回结果字符串"] --> TOOLMSG["追加 role=tool 消息<br/>tool_call_id + content"]
+    RES --> TOOLEXIT
+    UNKNOWN --> TOOLMSG
+
+    DISPATCH -.->|"抛出异常"| CATCH["catch：工具执行出错：{e}"] --> TOOLMSG
+
+    TOOLMSG --> ROUND
+
+    subgraph HELPERS["公共辅助函数"]
+        H1["decode_console(raw)<br/>cp936/mbcs/gbk/utf-8 依次尝试"]
+        H2["resolve(path)<br/>expanduser + abspath 相对路径转绝对"]
+        H3["is_text_file(path)<br/>前 8KB 是否含空字节"]
+        H4["read_text(path, encoding)<br/>utf-8 → gbk → 系统编码回退"]
+    end
+
+    subgraph FILETOOLS["本地文件操作工具组（python 标准库实现）"]
+        T4
+        T5
+        T6
+        T7
+        T8
+        T9
+        T10
+        T11
+        T12
+    end
+
+    subgraph DATETOOLS["日期与计算工具组"]
+        T1
+        T2
+    end
+
+    H1 -.-> T1
+    H2 -.-> FILETOOLS
+    H3 -.-> T5
+    H3 -.-> T6
+    H3 -.-> T8
+    H4 -.-> T6
+    H4 -.-> T8
