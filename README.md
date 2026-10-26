@@ -7,13 +7,13 @@ Agent 流式对话与工具调用入门练习，共五个相互独立的小项�
 
 | 目录 | 说明 | 技术栈 |
 | --- | --- | --- |
-| [`anythingllm-mcp/`](anythingllm-mcp/) | 把 AnythingLLM 工作区封装成 MCP 工具，供 opencode / 任意 MCP 客户端提问 | Python · MCP SDK 2.x · Streamable HTTP |
-| [`anthingllm-shangchuanwangye/`](anthingllm-shangchuanwangye/) | 单文件网页工具：上传文档到 AnythingLLM 并触发向量化嵌入 | 原生 HTML / JavaScript |
-| [`chongwuyiyuanmcp/pet-hospital-mcp/`](chongwuyiyuanmcp/pet-hospital-mcp/) | 把既有 Go 宠物医院 REST API 适配成无状态 MCP 服务 | Python · MCP SDK 2.x · Pydantic · pytest |
+| [`AnythingLLMMCP/`](AnythingLLMMCP/) | 把 AnythingLLM 工作区封装成 MCP 工具，供 opencode / 任意 MCP 客户端提问 | Python · MCP SDK 2.x · Streamable HTTP |
+| [`AnythingLLMServer/`](AnythingLLMServer/) | 单文件网页工具：上传文档到 AnythingLLM 并触发向量化嵌入 | 原生 HTML / JavaScript |
+| [`PetHospitalMCP/`](PetHospitalMCP/) | 把既有 Go 宠物医院 REST API 适配成无状态 MCP 服务 | Python · MCP SDK 2.x · Pydantic · pytest |
 | [`Agent/Practice01/`](Agent/Practice01/) | 最小流式对话练习：直接调用 OpenAI 兼容接口逐字输出回答 | Python · requests |
 | [`Agent/Practice02/`](Agent/Practice02/) | 工具调用（function calling）练习：日期/闰年计算 + 本地文件目录读写改删，附 Mermaid 架构图 | Python · requests |
 
-> 目录名 `anthingllm-shangchuanwangye` 为历史遗留拼写（`shangchuanwangye` = 上传网页），
+> 目录名 `AnythingLLMServer` 为历史遗留拼写（`shangchuanwangye` = 上传网页），
 > 为避免破坏既有链接予以保留。
 
 ## 各项目的关系
@@ -27,7 +27,7 @@ Agent 流式对话与工具调用入门练习，共五个相互独立的小项�
                 HTTP  /api/v1/...│              │ Streamable HTTP /mcp
                                 │              │
         ┌───────────────────────┴──┐        ┌──┴──────────────────────┐
-        │  上传网页（浏览器直连）  │        │  anythingllm-mcp       │
+        │  上传网页（浏览器直连）  │        │  AnythingLLMMCP       │
         │  document/upload        │        │  ask_workspace 工具    │
         │  workspace/update-...   │        └──┬──────────────────────┘
         └──────────────────────────┘           │ MCP client
@@ -38,14 +38,14 @@ Agent 流式对话与工具调用入门练习，共五个相互独立的小项�
                                           └────────────────┘
 
         ┌────────────────┐   HTTP    ┌──────────────────────┐   MCP    ┌──────────────┐
-        │  AI 客户端     │──────────▶│  pet-hospital-mcp    │◀─────────│  Go 宠物医院 │
+        │  AI 客户端     │──────────▶│  PetHospitalMCP    │◀─────────│  Go 宠物医院 │
         └────────────────┘  /mcp     │  list_pets 工具      │  /mcp    │  REST API    │
                                        └──────────────────────┘           └──────────────┘
 ```
 
-- **anythingllm-mcp** 与 **上传网页** 面向同一个 AnythingLLM 实例：网页负责「把知识灌进去」，
+- **AnythingLLMMCP** 与 **上传网页** 面向同一个 AnythingLLM 实例：网页负责「把知识灌进去」，
   MCP 服务负责「把知识问出来」。
-- **pet-hospital-mcp** 与 AnythingLLM 无关，是另一条独立练习线：把已有 REST 后端
+- **PetHospitalMCP** 与 AnythingLLM 无关，是另一条独立练习线：把已有 REST 后端
   无侵入地包装成 MCP 工具，**不修改 Go 后端任何代码**。
 - **Agent/Practice01** 同样与 MCP 无关，是最入门的一条线：绕开所有框架，
   直接用 `requests` 流式调用 OpenAI 兼容接口，理解「请求 → SSE → 逐字输出」的最小闭环。
@@ -57,13 +57,13 @@ Agent 流式对话与工具调用入门练习，共五个相互独立的小项�
 
 五个项目互相独立，按需选择其一安装。
 
-### 1. anythingllm-mcp
+### 1. AnythingLLMMCP
 
 前置条件：本机已运行 AnythingLLM（默认 `http://localhost:3001`），
 并已在其界面 **Settings → API Keys** 中生成密钥。
 
 ```powershell
-cd anythingllm-mcp
+cd AnythingLLMMCP
 pip install -r requirements.txt
 
 # 必须设置 API Key，否则服务拒绝启动
@@ -81,9 +81,9 @@ python test_client.py
 接入 opencode：本目录已附带 `opencode.json`（项目级 MCP 配置，只在当前目录生效）。
 注意必须**先启动服务**，opencode 才能看到 `ask_workspace` 工具。
 
-详见 [`anythingllm-mcp/README.md`](anythingllm-mcp/README.md)。
+详见 [`AnythingLLMMCP/README.md`](AnythingLLMMCP/README.md)。
 
-### 2. anthingllm-shangchuanwangye
+### 2. AnythingLLMServer
 
 无需安装依赖，直接用浏览器打开 `index.html`：
 
@@ -94,13 +94,13 @@ python test_client.py
 若 AnythingLLM 的端口不是默认的 `50368`，在地址栏附加参数打开：
 `index.html?api=http://localhost:<端口>/api`。
 
-### 3. chongwuyiyuanmcp/pet-hospital-mcp
+### 3. PetHospitalMCP
 
 前置条件：本机已运行 Go 宠物医院 REST API（默认 `http://127.0.0.1:8080`），
 且 `GET /health` 可访问。
 
 ```bash
-cd chongwuyiyuanmcp/pet-hospital-mcp
+cd PetHospitalMCP
 
 python -m venv .venv
 # Windows
@@ -111,7 +111,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 # 启动 MCP 服务（默认 127.0.0.1:8000）
-pet-hospital-mcp
+PetHospitalMCP
 # 等价于 python -m pet_hospital_mcp
 ```
 
@@ -128,9 +128,9 @@ npx @modelcontextprotocol/inspector
 # Transport 选 Streamable HTTP，URL 填 http://127.0.0.1:8000/mcp
 ```
 
-详见 [`chongwuyiyuanmcp/pet-hospital-mcp/README.md`](chongwuyiyuanmcp/pet-hospital-mcp/README.md)
+详见 [`PetHospitalMCP/README.md`](PetHospitalMCP/README.md)
 与面向后续开发者的
-[`UPGRADE_PROMPT.md`](chongwuyiyuanmcp/pet-hospital-mcp/UPGRADE_PROMPT.md)。
+[`UPGRADE_PROMPT.md`](PetHospitalMCP/UPGRADE_PROMPT.md)。
 
 ### 4. Agent/Practice01
 
@@ -187,36 +187,36 @@ python file_chat.py
 
 | 项目 | Python | 关键依赖 | 外部服务 |
 | --- | --- | --- | --- |
-| anythingllm-mcp | 3.11+ | `mcp[cli]>=2.0`、`httpx`、`uvicorn` | AnythingLLM（:3001） |
+| AnythingLLMMCP | 3.11+ | `mcp[cli]>=2.0`、`httpx`、`uvicorn` | AnythingLLM（:3001） |
 | 上传网页 | 无（浏览器） | — | AnythingLLM（:50368） |
-| pet-hospital-mcp | 3.11+ | `mcp==2.0.0`、`httpx`、`pydantic` | Go 宠物医院 API（:8080） |
+| PetHospitalMCP | 3.11+ | `mcp==2.0.0`、`httpx`、`pydantic` | Go 宠物医院 API（:8080） |
 | Agent/Practice01 | 3.8+ | `requests` | SiliconFlow 等 OpenAI 兼容 API |
 | Agent/Practice02 | 3.8+ | `requests` | SiliconFlow 等 OpenAI 兼容 API |
 
 ## 安全说明
 
-- 仓库**不包含任何 API Key**。密钥一律通过环境变量（`anythingllm-mcp`）、
+- 仓库**不包含任何 API Key**。密钥一律通过环境变量（`AnythingLLMMCP`）、
   页面输入框（上传网页）或本地 `config.ini`（`Agent/Practice01`、`Agent/Practice02`，均已被忽略）提供。
 - `.env`、`.venv/`、`__pycache__/`、`*.egg-info/`、`*.log`、`config.ini`
   均已在 `.gitignore` 中排除。
 - 前三个项目的本地服务均**只监听 127.0.0.1**，属于本机教学/实验用途：
-  `pet-hospital-mcp` 明确不做认证、权限与 CORS / Origin 校验，
+  `PetHospitalMCP` 明确不做认证、权限与 CORS / Origin 校验，
   **请勿直接暴露到公网**；`Agent/Practice01` 只作为出站客户端访问外部 API，
   `Agent/Practice02` 除出站请求外还会按对话指令创建、编辑、改名、删除本地文件与目录，
   请只在自己的练习目录下运行。
-- `pet-hospital-mcp` 的日志会对 `ownerPhone` / `ownerAddr` / `chipNo`
+- `PetHospitalMCP` 的日志会对 `ownerPhone` / `ownerAddr` / `chipNo`
   （含 snake_case 写法）在任意嵌套层级递归脱敏。
 - 若你曾在本仓库的历史提交中放置过密钥，请立即在对应服务中**轮换（rotate）该密钥**——
   从 Git 历史中删除并不能让它自动失效。
 
 ## 协议说明
 
-`pet-hospital-mcp` 使用 MCP **2026-07-28** 的无状态 Streamable HTTP 流程：
+`PetHospitalMCP` 使用 MCP **2026-07-28** 的无状态 Streamable HTTP 流程：
 不实现旧版 `initialize` 握手，不使用 `Mcp-Session-Id`，无会话存储与过期机制，
 每个请求独立携带 `_meta` 协议信封。详见其
-[README](chongwuyiyuanmcp/pet-hospital-mcp/README.md#无状态说明)。
+[README](PetHospitalMCP/README.md#无状态说明)。
 
 ## 许可证
 
 仓库内各子项目以学习与实验为目的。
-`pet-hospital-mcp` 在其 `pyproject.toml` 中声明为 MIT。
+`PetHospitalMCP` 在其 `pyproject.toml` 中声明为 MIT。
