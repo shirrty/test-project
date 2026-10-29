@@ -1,7 +1,11 @@
 .env
 .venv/
 __pycache__/
+*.pyc
 *.egg-info/
 *.log
+*.db
+*.sqlite*
 config.ini
 .idea/
+stderr.txt
