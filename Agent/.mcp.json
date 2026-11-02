@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "Bazi": {
+      "command": "cmd",
+      "args": ["/c", "npx", "bazi-mcp"]
+    }
+  }
+}
