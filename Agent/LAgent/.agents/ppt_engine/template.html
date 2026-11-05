@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>__DECK_TITLE__</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a;
+    font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+  .deck { display: flex; width: 100%; height: 100%; transition: transform .45s cubic-bezier(.7,0,.3,1); }
+  .slide { flex: 0 0 100%; height: 100%; padding: 6vh 7vw; display: flex; flex-direction: column;
+    justify-content: center; position: relative; }
+  .slide.light { background: #f4f3ef; color: #111; }
+  .slide.accent { background: #002FA7; color: #fff; }
+  .slide.dark { background: #111; color: #f4f3ef; }
+  .kicker { font-size: 1.1vw; letter-spacing: .25em; text-transform: uppercase;
+    opacity: .7; margin-bottom: 2vh; font-weight: 600; }
+  h1 { font-size: 6vw; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; }
+  h2 { font-size: 3.6vw; line-height: 1.1; font-weight: 800; margin-bottom: 3vh; letter-spacing: -.01em; }
+  .subtitle { font-size: 1.4vw; margin-top: 3vh; opacity: .8; font-weight: 400; }
+  ul.bullets { list-style: none; padding: 0; }
+  ul.bullets li { font-size: 1.5vw; line-height: 1.7; padding-left: 1.6em; position: relative; margin-bottom: .6em; }
+  ul.bullets li::before { content: ""; position: absolute; left: 0; top: .75em; width: .6em; height: .12em;
+    background: currentColor; opacity: .7; }
+  .big-num { font-size: 14vw; font-weight: 900; line-height: 1; letter-spacing: -.04em; }
+  .num-label { font-size: 1.3vw; margin-top: 2vh; opacity: .85; max-width: 30ch; line-height: 1.5; }
+
+  /* 两栏对比 */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 4vw; margin-top: 2vh; }
+  .two-col .col h3 { font-size: 1.5vw; margin-bottom: 1.2vh; letter-spacing: .05em;
+    padding-bottom: .6vh; border-bottom: 2px solid currentColor; }
+  .two-col .col ul { list-style: none; }
+  .two-col .col li { font-size: 1.2vw; line-height: 1.7; padding-left: 1.2em; position: relative; margin-bottom: .5em; }
+  .two-col .col li::before { content: ""; position: absolute; left: 0; top: .7em; width: .4em; height: .1em; background: currentColor; opacity: .7; }
+
+  /* 时间线 */
+  .timeline { display: flex; gap: 2vw; margin-top: 3vh; }
+  .timeline .tl-item { flex: 1; border-top: 3px solid currentColor; padding-top: 1.5vh; }
+  .timeline .tl-year { font-size: 2.2vw; font-weight: 800; letter-spacing: -.02em; }
+  .timeline .tl-text { font-size: 1.05vw; line-height: 1.5; margin-top: .8vh; opacity: .85; }
+
+  /* 大引用 */
+  .quote-text { font-size: 3.6vw; line-height: 1.3; font-weight: 700; letter-spacing: -.01em; max-width: 22ch; }
+  .quote-author { font-size: 1.2vw; margin-top: 3vh; opacity: .7; letter-spacing: .15em; }
+
+  /* 一行 KPI */
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2.5vw; margin-top: 3vh; }
+  .stats-row .stat { border-left: 3px solid currentColor; padding-left: 1.2vw; }
+  .stats-row .stat .v { font-size: 3.2vw; font-weight: 900; letter-spacing: -.03em; line-height: 1; }
+  .stats-row .stat .l { font-size: 1vw; margin-top: .8vh; opacity: .8; line-height: 1.4; }
+
+  /* 表格 */
+  table.simple { width: 100%; border-collapse: collapse; margin-top: 2vh; font-size: 1.15vw; }
+  table.simple th, table.simple td { text-align: left; padding: 1.2vh 1vw; border-bottom: 1px solid currentColor; }
+  table.simple th { font-weight: 700; opacity: .8; }
+  table.simple td:first-child { font-weight: 600; }
+  .footer { position: absolute; bottom: 3vh; left: 7vw; right: 7vw; display: flex; justify-content: space-between;
+    font-size: .85vw; opacity: .5; letter-spacing: .1em; }
+  .nav { position: fixed; bottom: 2vh; right: 3vw; color: #fff; font-size: .9vw;
+    background: rgba(0,0,0,.5); padding: .6em 1em; border-radius: 2em; z-index: 9; }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+__SLIDES__
+</div>
+<div class="nav"><span id="cur">1</span> / <span id="total">__TOTAL__</span>　← → 翻页</div>
+<script>
+  const deck = document.getElementById('deck');
+  const slides = deck.children.length;
+  document.getElementById('total').textContent = slides;
+  let idx = 0;
+  function go(i) { idx = Math.max(0, Math.min(slides-1, i));
+    deck.style.transform = `translateX(-${idx*100}%)`;
+    document.getElementById('cur').textContent = idx+1; }
+  window.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') go(idx+1);
+    if (e.key === 'ArrowLeft') go(idx-1);
+  });
+  let sx = null;
+  window.addEventListener('touchstart', e => sx = e.touches[0].clientX);
+  window.addEventListener('touchend', e => {
+    if (sx === null) return; const dx = e.changedTouches[0].clientX - sx;
+    if (Math.abs(dx) > 50) go(idx + (dx < 0 ? 1 : -1)); sx = null; });
+</script>
+</body>
+</html>

@@ -1,0 +1,187 @@
+{
+  "_note": "教学演示用示例批次档案，其中的检测值、客户名称、路线均为虚构，限量值仅用于演示判定逻辑，不构成权威标准依据。",
+  "batches": [
+    {
+      "batch_id": "SC20261012-01",
+      "product": "赣南脐橙",
+      "category": "鲜果",
+      "grade": "一级（果径 75-80mm）",
+      "owner": "信丰橙源合作社",
+      "origin": {"province": "江西", "county": "赣州信丰", "base": "A3 果园", "supplier": "信丰橙源合作社"},
+      "harvest": {"date": "2026-10-12", "method": "人工采摘", "precool": "采后 4 小时内入库预冷至 3℃"},
+      "packing": {"plant": "信丰产地仓 P2", "date": "2026-10-12", "package": "10kg 纸箱", "qty": "1200 箱"},
+      "quality": {
+        "inspection_date": "2026-10-13",
+        "lab": "赣州市农产品质量检测中心",
+        "items": [
+          {"name": "毒死蜱", "value": 0.02, "unit": "mg/kg", "limit": 0.05, "ok": true},
+          {"name": "吡虫啉", "value": 0.11, "unit": "mg/kg", "limit": 0.2, "ok": true},
+          {"name": "可溶性固形物", "value": 12.6, "unit": "%", "limit": "≥11", "ok": true},
+          {"name": "烂果率", "value": 1.8, "unit": "%", "limit": "≤3", "ok": true}
+        ],
+        "conclusion": "合格"
+      },
+      "cold_chain": {
+        "mode": "冷藏",
+        "target_low": 0,
+        "target_high": 4,
+        "device": "产地仓冷库 K3 → 顺丰冷运冷藏车",
+        "records": [
+          {"time": "2026-10-12 20:00", "temp": 3.2, "place": "产地仓冷库 K3"},
+          {"time": "2026-10-13 00:00", "temp": 2.8, "place": "产地仓冷库 K3"},
+          {"time": "2026-10-13 04:00", "temp": 3.0, "place": "产地仓冷库 K3"},
+          {"time": "2026-10-13 08:00", "temp": 7.4, "place": "南昌分拨中心装卸区"},
+          {"time": "2026-10-13 10:00", "temp": 6.1, "place": "南昌分拨中心装卸区"},
+          {"time": "2026-10-13 12:00", "temp": 3.6, "place": "冷藏车"},
+          {"time": "2026-10-13 20:00", "temp": 3.1, "place": "冷藏车"},
+          {"time": "2026-10-14 04:00", "temp": 2.9, "place": "冷藏车"},
+          {"time": "2026-10-14 12:00", "temp": 3.4, "place": "上海销地仓"}
+        ]
+      },
+      "logistics": {
+        "carrier": "顺丰冷运",
+        "ship_date": "2026-10-13",
+        "route": ["信丰产地仓", "南昌分拨中心", "上海销地仓"],
+        "arrive": "2026-10-14"
+      },
+      "downstream": [
+        {"buyer": "上海浦东某连锁商超", "qty": "600 箱", "ship": "2026-10-15"},
+        {"buyer": "杭州某生鲜电商前置仓", "qty": "400 箱", "ship": "2026-10-15"}
+      ],
+      "trace_code": "SC-2026-1012-01",
+      "notes": "10-13 08:00-10:00 在分拨中心装卸区停留期间温度超出 0-4℃ 区间，建议复核该时段操作"
+    },
+    {
+      "batch_id": "YN20261018-07",
+      "product": "云南蓝莓",
+      "category": "鲜果",
+      "grade": "特级（果径 ≥18mm）",
+      "owner": "玉溪蓝屿种植家庭农场",
+      "origin": {"province": "云南", "county": "玉溪澄江", "base": "B7 大棚", "supplier": "玉溪蓝屿种植家庭农场"},
+      "harvest": {"date": "2026-10-18", "method": "人工采摘", "precool": "采后 2 小时内真空预冷至 2℃"},
+      "packing": {"plant": "澄江产地仓 P1", "date": "2026-10-18", "package": "1.5kg 吸塑盒+泡沫箱", "qty": "800 箱"},
+      "quality": {
+        "inspection_date": "2026-10-19",
+        "lab": "玉溪市农产品质量安全检测站",
+        "items": [
+          {"name": "腐霉利", "value": 0.05, "unit": "mg/kg", "limit": 0.1, "ok": true},
+          {"name": "啶虫脒", "value": 0.03, "unit": "mg/kg", "limit": 0.2, "ok": true},
+          {"name": "霉变果比例", "value": 0.6, "unit": "%", "limit": "≤2", "ok": true}
+        ],
+        "conclusion": "合格"
+      },
+      "cold_chain": {
+        "mode": "冷藏",
+        "target_low": 0,
+        "target_high": 2,
+        "device": "产地仓冷库 K1 → 冷媒保温箱空运",
+        "records": [
+          {"time": "2026-10-18 18:00", "temp": 1.8, "place": "澄江产地仓 K1"},
+          {"time": "2026-10-18 23:00", "temp": 1.6, "place": "澄江产地仓 K1"},
+          {"time": "2026-10-19 04:00", "temp": 1.9, "place": "昆明长水机场货站"},
+          {"time": "2026-10-19 09:00", "temp": 2.0, "place": "昆明长水机场货站"},
+          {"time": "2026-10-19 14:00", "temp": 1.7, "place": "上海浦东到货"}
+        ]
+      },
+      "logistics": {
+        "carrier": "航空冷链专线",
+        "ship_date": "2026-10-19",
+        "route": ["澄江产地仓", "昆明长水机场", "上海浦东机场"],
+        "arrive": "2026-10-19"
+      },
+      "downstream": [
+        {"buyer": "上海某精品超市", "qty": "500 箱", "ship": "2026-10-20"},
+        {"buyer": "苏州某烘焙原料商", "qty": "200 箱", "ship": "2026-10-20"}
+      ],
+      "trace_code": "YN-2026-1018-07",
+      "notes": "全程温控在区间内，可正常放行"
+    },
+    {
+      "batch_id": "SD20260925-03",
+      "product": "烟台红富士苹果",
+      "category": "鲜果",
+      "grade": "一级（果径 80-85mm）",
+      "owner": "栖霞果业联合社",
+      "origin": {"province": "山东", "county": "烟台栖霞", "base": "C5 果园", "supplier": "栖霞果业联合社"},
+      "harvest": {"date": "2026-09-25", "method": "人工采摘", "precool": "采后 12 小时内入恒温库"},
+      "packing": {"plant": "栖霞产地仓 P4", "date": "2026-09-27", "package": "15kg 纸箱", "qty": "2400 箱"},
+      "quality": {
+        "inspection_date": "2026-09-28",
+        "lab": "烟台市农产品质量检测中心",
+        "items": [
+          {"name": "毒死蜱", "value": 0.01, "unit": "mg/kg", "limit": 0.05, "ok": true},
+          {"name": "硬度", "value": 8.2, "unit": "kg/cm2", "limit": "≥6.5", "ok": true},
+          {"name": "糖度", "value": 14.3, "unit": "%", "limit": "≥12", "ok": true}
+        ],
+        "conclusion": "合格"
+      },
+      "cold_chain": {
+        "mode": "冷藏",
+        "target_low": 0,
+        "target_high": 4,
+        "device": "产地仓恒温库 K5 → 干线冷藏车",
+        "records": [
+          {"time": "2026-09-27 20:00", "temp": 2.4, "place": "栖霞产地仓 K5"},
+          {"time": "2026-09-28 08:00", "temp": 2.1, "place": "栖霞产地仓 K5"},
+          {"time": "2026-09-28 20:00", "temp": 2.6, "place": "冷链干线车"},
+          {"time": "2026-09-29 08:00", "temp": 2.9, "place": "冷链干线车"},
+          {"time": "2026-09-29 20:00", "temp": 3.1, "place": "广州销地仓"}
+        ]
+      },
+      "logistics": {
+        "carrier": "鲁粤冷链干线",
+        "ship_date": "2026-09-28",
+        "route": ["栖霞产地仓", "临沂分拨", "广州销地仓"],
+        "arrive": "2026-09-30"
+      },
+      "downstream": [
+        {"buyer": "广州某批发市场档口", "qty": "1500 箱", "ship": "2026-09-30"},
+        {"buyer": "深圳某社区团购平台", "qty": "700 箱", "ship": "2026-10-01"}
+      ],
+      "trace_code": "SD-2026-0925-03",
+      "notes": "温控与质检均达标，常规放行批次"
+    },
+    {
+      "batch_id": "GX20261020-05",
+      "product": "广西沃柑",
+      "category": "鲜果",
+      "grade": "二级（果径 60-70mm）",
+      "owner": "南宁沃野农业有限公司",
+      "origin": {"province": "广西", "county": "南宁武鸣", "base": "D2 果园", "supplier": "南宁沃野农业有限公司"},
+      "harvest": {"date": "2026-10-20", "method": "机械辅助采摘", "precool": "未记录预冷环节"},
+      "packing": {"plant": "武鸣产地仓 P6", "date": "2026-10-21", "package": "12kg 塑料筐", "qty": "900 筐"},
+      "quality": {
+        "inspection_date": "2026-10-22",
+        "lab": "南宁市武鸣区检测点",
+        "items": [
+          {"name": "克百威", "value": 0.06, "unit": "mg/kg", "limit": 0.02, "ok": false},
+          {"name": "青果率", "value": 4.5, "unit": "%", "limit": "≤5", "ok": true}
+        ],
+        "conclusion": "不合格（克百威超限）"
+      },
+      "cold_chain": {
+        "mode": "冷藏",
+        "target_low": 2,
+        "target_high": 8,
+        "device": "常温库暂存后转冷藏车（记录不连续）",
+        "records": [
+          {"time": "2026-10-21 18:00", "temp": 9.6, "place": "武鸣产地仓常温区"},
+          {"time": "2026-10-22 06:00", "temp": 10.2, "place": "武鸣产地仓常温区"},
+          {"time": "2026-10-24 22:00", "temp": 6.4, "place": "冷藏车"},
+          {"time": "2026-10-25 10:00", "temp": 5.8, "place": "长沙销地仓"}
+        ]
+      },
+      "logistics": {
+        "carrier": "第三方零担冷链",
+        "ship_date": "2026-10-24",
+        "route": ["武鸣产地仓", "南宁分拨", "长沙销地仓"],
+        "arrive": "2026-10-25"
+      },
+      "downstream": [
+        {"buyer": "长沙某农贸批发商", "qty": "600 筐", "ship": "2026-10-25"}
+      ],
+      "trace_code": "GX-2026-1020-05",
+      "notes": "质检不合格且冷链记录存在 40 小时以上空缺，应冻结流向并追溯用药记录"
+    }
+  ]
+}

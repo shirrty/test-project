@@ -9,3 +9,6 @@ __pycache__/
 config.ini
 .idea/
 stderr.txt
+
+# 上下文归档（/compact 生成的会话原文，不入库）
+.agents/context/

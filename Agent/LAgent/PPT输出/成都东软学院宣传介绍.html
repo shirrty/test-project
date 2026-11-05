@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>成都东软学院宣传介绍</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a;
+    font-family: 'Inter', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+  .deck { display: flex; width: 100%; height: 100%; transition: transform .45s cubic-bezier(.7,0,.3,1); }
+  .slide { flex: 0 0 100%; height: 100%; padding: 6vh 7vw; display: flex; flex-direction: column;
+    justify-content: center; position: relative; }
+  .slide.light { background: #f4f3ef; color: #111; }
+  .slide.accent { background: #002FA7; color: #fff; }
+  .slide.dark { background: #111; color: #f4f3ef; }
+  .kicker { font-size: 1.1vw; letter-spacing: .25em; text-transform: uppercase;
+    opacity: .7; margin-bottom: 2vh; font-weight: 600; }
+  h1 { font-size: 6vw; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; }
+  h2 { font-size: 3.6vw; line-height: 1.1; font-weight: 800; margin-bottom: 3vh; letter-spacing: -.01em; }
+  .subtitle { font-size: 1.4vw; margin-top: 3vh; opacity: .8; font-weight: 400; }
+  ul.bullets { list-style: none; padding: 0; }
+  ul.bullets li { font-size: 1.5vw; line-height: 1.7; padding-left: 1.6em; position: relative; margin-bottom: .6em; }
+  ul.bullets li::before { content: ""; position: absolute; left: 0; top: .75em; width: .6em; height: .12em;
+    background: currentColor; opacity: .7; }
+  .big-num { font-size: 14vw; font-weight: 900; line-height: 1; letter-spacing: -.04em; }
+  .num-label { font-size: 1.3vw; margin-top: 2vh; opacity: .85; max-width: 30ch; line-height: 1.5; }
+  .footer { position: absolute; bottom: 3vh; left: 7vw; right: 7vw; display: flex; justify-content: space-between;
+    font-size: .85vw; opacity: .5; letter-spacing: .1em; }
+  .nav { position: fixed; bottom: 2vh; right: 3vw; color: #fff; font-size: .9vw;
+    background: rgba(0,0,0,.5); padding: .6em 1em; border-radius: 2em; z-index: 9; }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+<section class="slide accent"><div class="kicker">CHENGDU NEUSOFT UNIVERSITY</div><h1>成都东软学院</h1><div class="subtitle">教育创造学生价值 · 产教融合的 IT 应用型人才培养高地</div></section>
+<section class="slide light"><div class="kicker">01 / ABOUT</div><h2>学校概况：四川省第一所民办本科高校</h2><ul class="bullets"><li>2003 年经四川省人民政府批准设立成都东软信息技术职业学院，同年入选教育部首批 35 所国家级示范性软件职业技术学院</li><li>2011 年经教育部批准升格为成都东软学院，成为四川省第一所独立设置的民办本科高校（学校代码 12636）</li><li>2021 年通过普通高等学校本科教学工作合格评估，成为四川省第一所通过该项评估的民办高校</li><li>四川省民办教育协会会长单位、四川省向应用型整体转型改革试点高校、四川省首批新增硕士学位授予立项建设单位</li><li>由东软出资举办，坐落于成都都江堰—青城山世界自然文化双遗产地，占地面积近 53 万平方米</li></ul></section>
+<section class="slide accent"><div class="kicker">在校师生规模</div><div class="big-num">2 万+</div><div class="num-label">在校生 2 万余人，已累计为社会培养 5 万余名毕业生</div></section>
+<section class="slide dark"><div class="kicker">02</div><h1>学科专业与人才培养</h1></section>
+<section class="slide light"><div class="kicker">02 / DISCIPLINES</div><h2>以工学为主，五大学科门类协调发展</h2><ul class="bullets"><li>学科覆盖工学、管理学、艺术学、文学、医学五个门类，下设 13 个教学机构、10 个二级学院</li><li>2025 年共 30 个本科专业、3 个职业本科专业，面向全国 30 个省（市、区）招生</li><li>计算机与软件学院、智能科学与工程学院、信息与商务管理学院、数字艺术与设计学院、外国语学院、健康医疗科技学院等特色院系布局</li><li>2025 年获批教育部“数据科学与大数据技术（中外合作办学）”本科教育项目，合作院校为美国东康涅狄格州大学</li><li>四川省一流本科课程 31 门，物联网工程、数字媒体技术、电子商务入选省级一流本科专业建设点</li></ul></section>
+<section class="slide light"><div class="kicker">02 / MODEL</div><h2>TOPCARES 一体化人才培养模式</h2><ul class="bullets"><li>以“教育创造学生价值，学生创造社会价值”为办学理念，构建产教融合、面向应用的办学体制</li><li>全校范围实施 TOPCARES 一体化人才培养模式，形成校企合作、协同共赢的运行机制</li><li>依托东软集团及微软、英特尔、思科、华为、中国移动等企业资源，共建专业与实训体系</li><li>2004 年成立大学生创业中心 SOVO，并在此基础上成立创新创业学院，把创新创业教育融入培养全过程</li></ul></section>
+<section class="slide accent"><div class="kicker">创新创业平台</div><div class="big-num">4000+</div><div class="num-label">SOVO 成立以来累计孵化各类创新创业项目四千余项，获国家级众创空间认定</div></section>
+<section class="slide light"><div class="kicker">03 / EMPLOYMENT</div><h2>就业与育人成效</h2><ul class="bullets"><li>历届毕业生毕业去向落实率始终保持在 90% 以上</li><li>每年组织校园招聘会、专场招聘会、校友企业招聘会、网络招聘等活动，提供岗位数为毕业人数的 20 多倍</li><li>就业领域覆盖计算机、网络、通信、金融、汽车、家电、政府等多个方向</li><li>毕业生进入东软集团、华为、中国移动、中国电信、华西医院、国家电网等知名单位的人数逐年增多</li></ul></section>
+<section class="slide light"><div class="kicker">04 / CAMPUS</div><h2>校园与办学条件</h2><ul class="bullets"><li>校区位于成都都江堰—青城山国家 5A 级旅游景区，自然环境与文化底蕴兼备</li><li>占地近 53 万平方米，建有教学楼、图书馆、实验实训中心、学生公寓与运动场馆等完备设施</li><li>设有国际教育学院，开展留学生教育与中外合作办学，形成本科教育为主、留学生教育与高职教育协同的办学格局</li><li>国家级众创空间、四川省博士后创新实践基地等平台支撑学生实践与科研训练</li></ul></section>
+<section class="slide dark"><h1>教育创造学生价值</h1><div class="subtitle">成都东软学院 · 期待与你共同成长</div></section>
+</div>
+<div class="nav"><span id="cur">1</span> / <span id="total">10</span>　← → 翻页</div>
+<script>
+  const deck = document.getElementById('deck');
+  const slides = deck.children.length;
+  document.getElementById('total').textContent = slides;
+  let idx = 0;
+  function go(i) { idx = Math.max(0, Math.min(slides-1, i));
+    deck.style.transform = `translateX(-${idx*100}%)`;
+    document.getElementById('cur').textContent = idx+1; }
+  window.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ') go(idx+1);
+    if (e.key === 'ArrowLeft') go(idx-1);
+  });
+  let sx = null;
+  window.addEventListener('touchstart', e => sx = e.touches[0].clientX);
+  window.addEventListener('touchend', e => {
+    if (sx === null) return; const dx = e.changedTouches[0].clientX - sx;
+    if (Math.abs(dx) > 50) go(idx + (dx < 0 ? 1 : -1)); sx = null; });
+</script>
+</body>
+</html>
