@@ -2,6 +2,7 @@ import configparser
 import json
 import locale
 import os
+import re
 import subprocess
 import sys
 import time
@@ -20,7 +21,14 @@ try:
         config = configparser.ConfigParser()
         config.read_file(f)
 except FileNotFoundError:
-    sys.exit("缺少 config.ini：请把 config.example.ini 复制为 config.ini 并填写密钥")
+    # 没有配置文件也允许启动：退到同目录的 config.example.ini，缺密钥时由界面提示，不直接退出
+    _example = Path(__file__).with_name("config.example.ini")
+    if not _example.is_file():
+        sys.exit("缺少 config.ini：请把 config.example.ini 复制为 config.ini 并填写密钥")
+    config = configparser.ConfigParser()
+    config.read(_example, encoding="utf-8")
+    print("[提示] 未找到 config.ini，已临时使用 config.example.ini；请填写 [llm] api_key 后重新启动",
+          file=sys.stderr)
 
 base_url = config["llm"]["base_url"].rstrip("/")
 api_key = config["llm"]["api_key"]
@@ -103,6 +111,34 @@ TOOLS = [
                     "filename": {"type": "string", "description": "可选：要读取的附加文件路径（相对技能目录、项目相对路径或绝对路径）；不传则返回该技能的 SKILL.md 全文"},
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "createSkill",
+            "description": (
+                "创建新技能：把技能落盘为「目录 + 带 YAML frontmatter 的 SKILL.md」。"
+                "只在用户明确要求新建/制作一个技能时调用；同名技能已存在时拒绝覆盖"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "技能目录名：小写字母/数字/下划线/连字符，字母或数字开头，最长 64 字符",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "一句话简介（必填，≤200 字）：会注入系统提示，模型靠它判断何时加载",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "SKILL.md 正文（Markdown），可省略",
+                    },
+                },
+                "required": ["name", "description"],
             },
         },
     },
@@ -215,6 +251,103 @@ def loadSkill(name=None, filename=None, **kwargs):
     if not target.is_relative_to(skill["dir"].resolve()):
         return "[loadSkill] 路径越界：只能读取该技能目录内部的文件"
     return clip_output(target.read_text(encoding="utf-8", errors="replace"))
+
+
+# 技能名：字母/数字开头，只允许 - _，最长 64 字符（不放开点号，避免 ../ 路径穿越）
+SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+SKILL_BODY_MAX = 20000
+SKILL_DESC_MAX = 200
+
+
+def _skill_names():
+    """已有技能目录名与 frontmatter name，用于重名校验"""
+    names = []
+    for s in discover_skills():
+        names.append(s["dir"].name)
+        if s["name"] and s["name"] != s["dir"].name:
+            names.append(s["name"])
+    return names
+
+
+def createSkill(name=None, description=None, body=None, **kwargs):
+    """把技能落盘为「目录 + 带 YAML frontmatter 的 SKILL.md」。
+
+    校验名字合法、描述非空、不与已有技能重名、目录必须直接位于技能根下；
+    已存在则拒绝覆盖；写盘失败回滚空目录，不留半成品。
+    """
+    if not name:
+        return "[createSkill] 缺少参数 name：技能目录名必填，例如 name=\"cold-chain-check\""
+    raw_name = str(name).strip()
+    if not SKILL_NAME_RE.match(raw_name):
+        return (f"[createSkill] 名字不合法：{raw_name}\n"
+                "只允许小写字母、数字、下划线、连字符，字母或数字开头，最长 64 字符")
+    if raw_name in _skill_names():
+        return (f"[createSkill] 技能已存在，拒绝覆盖：{raw_name}\n"
+                f"当前可用技能：{', '.join(_skill_names()) or '（无）'}")
+
+    desc = " ".join(str(description or "").split())   # 单行化，别让换行打断 frontmatter
+    if not desc:
+        return ("[createSkill] 缺少参数 description：描述会注入系统提示，"
+                "模型靠它判断何时加载本技能，必填")
+    if len(desc) > SKILL_DESC_MAX:
+        desc = desc[:SKILL_DESC_MAX].rstrip() + "…"
+
+    content = str(body or "").strip()
+    if len(content) > SKILL_BODY_MAX:
+        content = content[:SKILL_BODY_MAX] + "\n\n…（正文超长已截断）"
+    if not content:
+        content = "# 使用说明\n\n（正文待补充：写清这个技能该怎么做、有哪些约束。）\n"
+
+    skills_root = SKILLS_DIR.resolve()
+    target_dir = (skills_root / raw_name).resolve()
+    if target_dir.parent != skills_root:
+        return f"[createSkill] 路径越界：技能目录必须直接位于技能根下（{skills_root}）"
+
+    try:
+        skills_root.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(exist_ok=False)
+    except FileExistsError:
+        return f"[createSkill] 目录已存在，拒绝覆盖：{target_dir}"
+    except OSError as e:
+        return f"[createSkill] 创建技能目录失败：{e}"
+
+    text = f"---\nname: {raw_name}\ndescription: {desc}\n---\n\n{content}\n"
+    try:
+        (target_dir / "SKILL.md").write_text(text, encoding="utf-8")
+    except OSError as e:
+        try:
+            target_dir.rmdir()
+        except OSError:
+            pass
+        return f"[createSkill] 写入 SKILL.md 失败：{e}"
+
+    return (f"已创建技能：{raw_name}\n- 目录：{target_dir}\n- 描述：{desc}\n"
+            f"- SKILL.md：{len(text)} 字符（正文上限 {SKILL_BODY_MAX}）")
+
+
+# ---------- 长期规则文件：AGENT.md / AGENTS.md ----------
+INSTRUCTIONS_MAX = config.getint("agent", "max_chars", fallback=8000)
+
+
+def load_instructions():
+    """按 [agent] instructions_file → AGENT.md → AGENTS.md 顺序找长期规则，超长截断，缺失返回 None"""
+    raw = config.get("agent", "instructions_file", fallback="").strip().strip('"').strip("'")
+    candidates = ([Path(os.path.expandvars(raw)).expanduser()] if raw
+                  else [Path("AGENT.md"), Path("AGENTS.md"), Path(".agents/AGENT.md")])
+    for p in candidates:
+        try:
+            if not p.is_file():
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        if not text:
+            continue
+        total = len(text)
+        if total > INSTRUCTIONS_MAX:
+            text = text[:INSTRUCTIONS_MAX] + f"\n…（已截断，原文共 {total} 字符）"
+        return f"# 项目长期规则（{p.name}）\n\n{text}"
+    return None
 
 
 def decode_console(raw):
@@ -356,6 +489,7 @@ TOOL_HANDLERS = {
     "RunCli": RunCli,
     "getDate": getDate,
     "loadSkill": loadSkill,
+    "createSkill": createSkill,
 }
 
 
@@ -497,8 +631,7 @@ def init_mcp_servers():
         ev.wait(timeout=remaining)
 
 
-# 启动时初始化 MCP（阻塞等连接就绪，连不上不影响主流程）
-init_mcp_servers()
+# 说明：MCP 初始化改在 main() 里调用——模块被 import 时不拉子进程，方便写自测
 
 
 def call_tool(name, arguments):
@@ -627,6 +760,9 @@ def build_system_prompt():
         lines.append("Use the `loadSkill` tool to load the full instructions of a skill "
                      "when needed. You can also load additional files referenced by a skill.")
         content += "\n" + "\n".join(lines)
+    rules = load_instructions()
+    if rules:
+        content += "\n\n" + rules
     return content
 
 
@@ -718,6 +854,7 @@ class ChatApp(App):
 
 
 def main():
+    init_mcp_servers()      # 启动时初始化 MCP（最多等 30s，连不上不影响主流程）
     messages = [
         {
             "role": "system",

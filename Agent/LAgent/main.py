@@ -61,6 +61,13 @@ max_tool_output = 2000
 # /save /new /resume 的会话存档目录
 dir = .agents/sessions
 
+[agent]
+# 长期规则文件：留空则按 AGENT.md → AGENTS.md → .agents/AGENT.md 顺序自动查找
+# 也可以写死一个相对/绝对路径（支持 %USERPROFILE% 之类的环境变量）
+instructions_file =
+# 注入时的字符上限，超出截断并标注原文长度
+max_chars = 8000
+
 # MCP 服务器：每台一节 [mcp.名字]，command 是启动命令，args 是空格分隔参数。
 # 未配置时边栏显示「未配置」；示例（去掉注释即可启用）：
 # [mcp.example]
@@ -327,6 +334,35 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "createSkill",
+            "description": (
+                "创建新技能：把技能落盘为「目录 + 带 YAML frontmatter 的 SKILL.md」。"
+                "只在用户明确要求新建/制作一个技能时调用；同名技能已存在时拒绝覆盖。"
+                "创建后本会话需重新启动或调用 loadSkill 才能读到新内容。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "技能目录名：小写字母/数字/下划线/连字符，字母或数字开头，最长 64 字符，不能与已有技能重名",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "一句话简介（必填，≤200 字）：它会注入系统提示，模型靠它判断何时加载本技能",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "SKILL.md 正文（Markdown），可省略；省略时只写 frontmatter 与空模板",
+                    },
+                },
+                "required": ["name", "description"],
+            },
+        },
+    },
 ]
 
 
@@ -354,8 +390,8 @@ PROJECT_ROOT = _find_project_root()
 
 
 def _resolve_skills_dir():
-    """技能目录优先读 config.ini 的 [skills] dir；未配置则回退项目根 .agents/skills。"""
-    raw = config.get("skills", "dir", fallback="").strip().strip('"').strip("'")
+    """技能目录优先读 config.ini 的 [skills] dir；未配置（含首次运行无配置文件）则回退项目根 .agents/skills。"""
+    raw = (config.get("skills", "dir", fallback="") if config is not None else "").strip().strip('"').strip("'")
     if raw:
         return Path(os.path.expandvars(raw)).expanduser().resolve()
     return (PROJECT_ROOT / ".agents" / "skills").resolve()
@@ -455,6 +491,83 @@ def loadSkill(name=None, filename=None, **kwargs):
     if not target.is_relative_to(skill["dir"].resolve()):
         return "[loadSkill] 路径越界：只能读取该技能目录内部的文件"
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+# 技能名：小写字母/数字开头，只允许 - _ 连接，最长 64 字符（不含点，避免 ../ 之类的路径穿越）
+SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+SKILL_BODY_MAX = 20000      # SKILL.md 正文上限，避免一次写进几十万字
+SKILL_DESC_MAX = 200        # 描述上限，它要进系统提示
+
+
+def _skill_dirs() -> list[str]:
+    """已有技能目录名与 frontmatter name，用于重名校验。"""
+    names = []
+    for s in discover_skills():
+        names.append(s["dir"].name)
+        if s["name"] and s["name"] != s["dir"].name:
+            names.append(s["name"])
+    return names
+
+
+def createSkill(name=None, description=None, body=None, **kwargs):
+    """把技能落盘为「目录 + 带 YAML frontmatter 的 SKILL.md」。
+
+    校验项：名字合法、描述非空、不与已有技能重名、目录必须在技能根内；
+    已存在则拒绝覆盖（不静默改写别人的技能）；写盘失败会把空目录回滚掉。
+    """
+    if not name:
+        return "[createSkill] 缺少参数 name：技能目录名必填，例如 name=\"cold-chain-check\""
+    raw_name = str(name).strip()
+    if not SKILL_NAME_RE.match(raw_name):
+        return (f"[createSkill] 名字不合法：{raw_name}\n"
+                "只允许小写字母、数字、下划线、连字符，字母或数字开头，最长 64 字符；"
+                "不允许大写字母、空格、点号与路径分隔符")
+    if raw_name in _skill_dirs():
+        return (f"[createSkill] 技能已存在，拒绝覆盖：{raw_name}\n"
+                f"当前可用技能：{', '.join(_skill_dirs()) or '（无）'}")
+
+    desc = " ".join(str(description or "").split())   # 单行化，防止换行破坏 frontmatter
+    if not desc:
+        return ("[createSkill] 缺少参数 description：技能描述会注入系统提示，"
+                "模型靠它判断何时加载本技能，必填")
+    if len(desc) > SKILL_DESC_MAX:
+        desc = desc[:SKILL_DESC_MAX].rstrip() + "…"
+
+    content = str(body or "").strip()
+    if len(content) > SKILL_BODY_MAX:
+        content = content[:SKILL_BODY_MAX] + "\n\n…（正文超长已截断）"
+    if not content:
+        content = ("# 使用说明\n\n"
+                   "（正文待补充：这里写这个技能该怎么做、有哪些约束、可以用哪些参考文件。）\n")
+
+    skills_root = SKILLS_DIR.resolve()
+    target_dir = (skills_root / raw_name).resolve()
+    if skills_root != target_dir.parent:
+        return f"[createSkill] 路径越界：技能目录必须直接位于技能根下（{skills_root}）"
+
+    try:   # 父目录按需建好（技能是直接子目录，这里只会补技能根本身）
+        skills_root.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(exist_ok=False)
+    except FileExistsError:
+        return f"[createSkill] 目录已存在，拒绝覆盖：{target_dir}"
+    except OSError as e:
+        return f"[createSkill] 创建技能目录失败：{e}"
+
+    text = f"---\nname: {raw_name}\ndescription: {desc}\n---\n\n{content}\n"
+    try:
+        (target_dir / "SKILL.md").write_text(text, encoding="utf-8")
+    except OSError as e:
+        try:
+            target_dir.rmdir()      # 写失败就把刚建的空目录回滚，不留半成品
+        except OSError:
+            pass
+        return f"[createSkill] 写入 SKILL.md 失败：{e}"
+
+    return (f"已创建技能：{raw_name}\n"
+            f"- 目录：{target_dir}\n"
+            f"- 描述：{desc}\n"
+            f"- SKILL.md：{len(text)} 字符（正文上限 {SKILL_BODY_MAX}）\n"
+            f"下次 discover_skills() 扫描时会被发现；本会话可直接 loadSkill(name=\"{raw_name}\") 读回确认。")
 
 
 # 命中这些关键词时自动注入对应技能的完整 SKILL.md
@@ -697,7 +810,7 @@ def _parse_window(value):
 
 def detect_context_window():
     """按 配置 → 模型 API(/models) → 默认 128k 的顺序确定上下文窗口，返回 (tokens, 来源)"""
-    configured = _parse_window(config.get("llm", "context_window", fallback=""))
+    configured = _parse_window(config.get("llm", "context_window", fallback="") if config else "")
     if configured > 0:
         return configured, "配置"
 
@@ -753,7 +866,7 @@ def messages_token_estimate(messages, include_tools=True):
 # ---------- 上下文归档：.agents/context/<编号>.jsonl ----------
 def _resolve_context_dir():
     """归档目录优先读 config.ini 的 [context] dir；未配置则用 项目根\\.agents\\context"""
-    raw = config.get("context", "dir", fallback="").strip().strip('"').strip("'")
+    raw = (config.get("context", "dir", fallback="") if config is not None else "").strip().strip('"').strip("'")
     if raw:
         return Path(os.path.expandvars(raw)).expanduser().resolve()
     return (PROJECT_ROOT / ".agents" / "context").resolve()
@@ -836,21 +949,38 @@ def load_session(sid):
         return None, f"会话读取失败：{e}"
 
 
-# ---------- AGENTS.md：一次注入、全程复用 ----------
+# ---------- 长期规则文件（AGENT.md / AGENTS.md）：一次注入、全程复用 ----------
+INSTRUCTIONS_MAX = config.getint("agent", "max_chars", fallback=8000) if config else 8000
+
+
+def _instructions_candidates() -> list[Path]:
+    """长期规则文件的查找顺序：[agent] instructions_file（可配）→ AGENT.md → AGENTS.md → .agents/AGENT.md。"""
+    raw = ""
+    if config is not None:
+        raw = config.get("agent", "instructions_file", fallback="").strip().strip('"').strip("'")
+    if raw:
+        return [Path(os.path.expandvars(raw)).expanduser()]
+    return [Path("AGENT.md"), Path("AGENTS.md"), Path(".agents/AGENT.md")]
+
+
 def agents_md_message():
-    """当前目录有 AGENTS.md 时，把它作为一条 user 消息注入会话；没有则返回 None"""
-    p = Path("AGENTS.md")
-    if not p.is_file():
-        return None
-    try:
-        text = p.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    if not text:
-        return None
-    return {"role": "user",
-            "content": f"[项目说明 AGENTS.md]\n\n{text}\n\n"
-                       "以上为本项目根目录 AGENTS.md 的完整内容，后续请遵循其中约定。"}
+    """按候选顺序找长期规则文件；找到则作为一条 user 消息注入，超长截断，缺失或为空返回 None。"""
+    for p in _instructions_candidates():
+        try:
+            if not p.is_file():
+                continue
+            text = p.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not text:
+            continue
+        total = len(text)
+        if total > INSTRUCTIONS_MAX:
+            text = text[:INSTRUCTIONS_MAX] + f"\n\n…（已截断，原文共 {total} 字符）"
+        return {"role": "user",
+                "content": f"[项目说明 {p.name}]\n\n{text}\n\n"
+                           f"以上为本项目长期规则文件 {p.name} 的内容，后续请遵循其中约定。"}
+    return None
 
 
 def new_archive_id():
@@ -2023,6 +2153,7 @@ TOOL_HANDLERS = {
     "auditColdChain": auditColdChain,
     "checkResidues": checkResidues,
     "makePpt": makePpt,
+    "createSkill": createSkill,
 }
 
 
@@ -2626,12 +2757,12 @@ class ChatApp(App):
                 log.write(f"[yellow]自动存档失败：{err}（仍继续开新会话）[/]")
             else:
                 log.write(f"[green]原会话已自动存档：{path.name}[/]")
-        # 开新会话：重建 system prompt，并按需重新注入 AGENTS.md
+        # 开新会话：重建 system prompt，并按需重新注入长期规则文件（AGENT.md / AGENTS.md）
         self.messages[:] = [{"role": "system", "content": build_system_prompt()}]
         agents = agents_md_message()
         if agents:
             self.messages.append(agents)
-            log.write("[dim]已注入当前目录 AGENTS.md[/]")
+            log.write("[dim]已注入长期规则文件（AGENT.md / AGENTS.md）[/]")
         self.api_usage = None
         self.usage_mark = 0
         self.context_blocked = False

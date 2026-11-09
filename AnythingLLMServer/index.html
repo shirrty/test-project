@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AnythingLLM 文档上传</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e3e6ea;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --primary: #2563eb;
+    --ok: #12805c;
+    --err: #c0392b;
+    --warn: #a16207;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  input[type="text"], input[type="password"], select {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font: inherit;
+    background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid #bfd3fb; border-color: var(--primary); }
+  .row { margin-bottom: 14px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button {
+    padding: 10px 18px;
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--primary);
+    color: #fff;
+  }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost { background: #eef1f5; color: var(--text); }
+  .status { margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; display: none; }
+  .status.loading { display: block; background: #eff6ff; color: var(--primary); }
+  .status.ok { display: block; background: #ecfdf5; color: var(--ok); }
+  .status.err { display: block; background: #fef2f2; color: var(--err); }
+  .status.warn { display: block; background: #fffbeb; color: var(--warn); }
+  .result { margin-top: 10px; font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  .dot.loading { background: var(--primary); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>AnythingLLM 文档上传</h1>
+  <p class="sub">填本机的 AnythingLLM 地址与 API Key，把文件传进指定工作区并触发向量化。</p>
+
+  <div class="card">
+    <h2>连接</h2>
+    <div class="grid">
+      <div>
+        <label for="base">API 地址</label>
+        <input id="base" type="text" placeholder="http://localhost:3001/api" autocomplete="off">
+        <div class="hint">anythingllm 默认监听 3001 端口</div>
+      </div>
+      <div>
+        <label for="key">API Key</label>
+        <input id="key" type="password" placeholder="在 AnythingLLM 设置里生成的 Key" autocomplete="off">
+        <div class="hint">只存在本机浏览器 localStorage，不上传任何服务器</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="save" class="ghost" type="button">保存连接设置</button>
+      <button id="clear" class="ghost" type="button">清除已存密钥</button>
+      <span class="hint" id="saveState"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>上传</h2>
+    <div class="row">
+      <label for="ws">目标工作区</label>
+      <select id="ws"><option value="">— 点右侧按钮加载 —</option></select>
+      <div class="hint">列表来自 GET /v1/workspaces，不是写死的</div>
+    </div>
+    <div class="row">
+      <label for="file">选择文件</label>
+      <input id="file" type="file">
+      <div class="hint">支持 txt / md / pdf / docx 等 AnythingLLM 可解析格式</div>
+    </div>
+    <div class="actions">
+      <button id="refresh" class="ghost" type="button">加载工作区</button>
+      <button id="upload" type="button">上传并向量化</button>
+    </div>
+    <div id="status" class="status"></div>
+    <div id="result" class="result"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // 端点常量：地址可由用户输入覆盖，密钥一律来自输入框 / localStorage
+  var EP = { workspaces: "/v1/workspaces", upload: "/v1/document/upload" };
+  var LS = { base: "anythingllm.base", key: "anythingllm.key" };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var elBase = $("base"), elKey = $("key"), elWs = $("ws"), elFile = $("file");
+  var elStatus = $("status"), elResult = $("result"), elSaveState = $("saveState");
+
+  function apiBase() {
+    var v = elBase.value.trim().replace(/\/+$/, "");
+    return v || "http://localhost:3001/api";
+  }
+
+  function setStatus(kind, text) {
+    elStatus.className = "status " + kind;
+    elStatus.textContent = "";
+    if (kind === "loading") {
+      var dot = document.createElement("span");
+      dot.className = "dot loading";
+      elStatus.appendChild(dot);
+    }
+    elStatus.appendChild(document.createTextNode(text));
+  }
+
+  function clearStatus() {
+    elStatus.className = "status";
+    elStatus.textContent = "";
+    elResult.textContent = "";
+  }
+
+  function showResult(text) { elResult.textContent = text; }
+
+  function headers() {
+    return { "Authorization": "Bearer " + elKey.value.trim(), "Accept": "application/json" };
+  }
+
+  // 统一请求：无论 200 还是业务错误，都把服务端原文带上，方便排查
+  function request(url, options) {
+    return fetch(url, options).then(function (resp) {
+      return resp.text().then(function (raw) {
+        var body = null;
+        try { body = raw ? JSON.parse(raw) : null; } catch (e) { body = null; }
+        if (!resp.ok) {
+          var msg = (body && (body.error || body.message)) || raw || ("HTTP " + resp.status);
+          throw new Error("HTTP " + resp.status + "：" + String(msg).slice(0, 300));
+        }
+        return body;
+      });
+    });
+  }
+
+  function loadSaved() {
+    try {
+      elBase.value = localStorage.getItem(LS.base) || "http://localhost:3001/api";
+      var k = localStorage.getItem(LS.key);
+      if (k) { elKey.value = k; elSaveState.textContent = "已从本机读取上次保存的连接"; }
+    } catch (e) {
+      elSaveState.textContent = "浏览器禁止 localStorage，本次不保存设置";
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(LS.base, apiBase());
+      localStorage.setItem(LS.key, elKey.value.trim());
+      elSaveState.textContent = "已保存到本机（" + new Date().toLocaleTimeString() + "）";
+      setStatus("ok", "连接设置已保存到本机浏览器");
+    } catch (e) {
+      setStatus("warn", "无法写入 localStorage：" + e.message);
+    }
+  }
+
+  function clearKey() {
+    try {
+      localStorage.removeItem(LS.key);
+      localStorage.removeItem(LS.base);
+      elKey.value = "";
+      elSaveState.textContent = "已清除本机保存的密钥";
+      clearStatus();
+      setStatus("warn", "已清除本机保存的密钥，请重新填写");
+    } catch (e) {
+      setStatus("err", "清除失败：" + e.message);
+    }
+  }
+
+  function refreshWorkspaces() {
+    if (!elKey.value.trim()) { setStatus("err", "先填 API Key 再加载工作区"); return; }
+    clearStatus();
+    setStatus("loading", "正在读取工作区列表…");
+    request(apiBase() + EP.workspaces, { headers: headers() })
+      .then(function (body) {
+        var list = (body && body.workspaces) || [];
+        elWs.textContent = "";
+        if (!list.length) {
+          var opt = document.createElement("option");
+          opt.value = ""; opt.textContent = "（该实例还没有工作区）";
+          elWs.appendChild(opt);
+          setStatus("warn", "接口返回 0 个工作区，请先在 AnythingLLM 里新建一个");
+          return;
+        }
+        list.forEach(function (w) {
+          var opt = document.createElement("option");
+          opt.value = w.slug;
+          opt.textContent = w.name + "（" + (w.documents ? w.documents.length : 0) + " 篇）";
+          elWs.appendChild(opt);
+        });
+        setStatus("ok", "已加载 " + list.length + " 个工作区");
+        showResult("GET " + EP.workspaces + " 返回字段：" + Object.keys(body).join(", "));
+      })
+      .catch(function (err) {
+        setStatus("err", "加载工作区失败：" + err.message);
+      });
+  }
+
+  function upload() {
+    var file = elFile.files && elFile.files[0];
+    var slug = elWs.value;
+    if (!elKey.value.trim()) { setStatus("err", "先填 API Key"); return; }
+    if (!slug) { setStatus("err", "先选目标工作区（没列表就点「加载工作区」）"); return; }
+    if (!file) { setStatus("err", "先选一个文件"); return; }
+
+    var fd = new FormData();
+    fd.append("file", file, file.name);
+    fd.append("addToWorkspaces", slug);
+
+    var btn = $("upload");
+    btn.disabled = true;
+    clearStatus();
+    setStatus("loading", "正在上传 " + file.name + "（" + Math.round(file.size / 1024) + " KB）…");
+
+    request(apiBase() + EP.upload, { method: "POST", headers: headers(), body: fd })
+      .then(function (body) {
+        var okFlag = body && (body.success !== false);
+        var docs = (body && body.documents) || [];
+        if (!okFlag) {
+          setStatus("err", "服务端返回失败：" + JSON.stringify(body).slice(0, 300));
+          return;
+        }
+        setStatus("ok", "上传成功，已加入工作区 " + slug + "，向量化在后台进行");
+        var lines = [];
+        docs.forEach(function (d) {
+          lines.push("· " + (d.title || d.name || "(未命名)") + " — " + (d.wordCount || 0) + " 词，"
+                     + (d.token_count_estimate || 0) + " tokens");
+        });
+        showResult(lines.length ? lines.join("\n") : "服务端未返回 documents 明细：" + JSON.stringify(body).slice(0, 200));
+      })
+      .catch(function (err) {
+        setStatus("err", "上传失败：" + err.message);
+        showResult("排查：确认 AnythingLLM 已启动、端口正确、Key 有写入权限、文件格式受支持。");
+      })
+      .finally(function () { btn.disabled = false; });
+  }
+
+  $("save").addEventListener("click", save);
+  $("clear").addEventListener("click", clearKey);
+  $("refresh").addEventListener("click", refreshWorkspaces);
+  $("upload").addEventListener("click", upload);
+  elWs.addEventListener("change", clearStatus);
+
+  loadSaved();
+})();
+</script>
+</body>
+</html>

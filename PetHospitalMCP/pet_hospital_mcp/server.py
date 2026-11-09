@@ -1,14 +1,28 @@
 """MCP Server 入口：宠爱AI病历管理系统
 
 使用 MCP Python SDK 2.x (MCPServer)，stdio 传输，无状态架构。
-工具内部捕获异常并返回结构化错误，避免 server 崩溃。
+工具内部捕获异常并返回结构化错误（含固定错误码），并对每次调用输出一行日志。
 """
 
 from __future__ import annotations
 
+import functools
+import logging
+import sqlite3
+import time
+
 from mcp.server.mcpserver import MCPServer
 
 from . import store
+
+logger = logging.getLogger("pet_hospital_mcp")
+
+# 错误码：调用方按码分支，不看中文文案
+E_VALIDATION = "VALIDATION_ERROR"
+E_NOT_FOUND = "NOT_FOUND"
+E_CONFLICT = "CONFLICT"
+E_DB = "DB_ERROR"
+E_INTERNAL = "INTERNAL_ERROR"
 
 mcp = MCPServer(
     name="pet-hospital-mcp",
@@ -22,14 +36,46 @@ def _ok(data) -> dict:
     return {"ok": True, "data": data}
 
 
-def _err(message: str, detail: str = "") -> dict:
-    """错误响应包装"""
-    return {"ok": False, "error": message, "detail": detail}
+def _err(message: str, detail: str = "", code: str = E_INTERNAL) -> dict:
+    """错误响应包装：错误码固定，调用方可按 code 分支，不必靠 message 猜"""
+    return {"ok": False, "error": message, "detail": detail, "code": code}
+
+
+def _classify(exc: Exception) -> str:
+    """把异常归类成稳定错误码"""
+    if isinstance(exc, sqlite3.IntegrityError):
+        return E_CONFLICT
+    if isinstance(exc, sqlite3.Error):
+        return E_DB
+    if isinstance(exc, ValueError):
+        return E_NOT_FOUND if "不存在" in str(exc) else E_VALIDATION
+    if isinstance(exc, (KeyError, TypeError)):
+        return E_VALIDATION
+    return E_INTERNAL
+
+
+def _traced(fn):
+    """工具调用日志：工具名、耗时、ok、错误码。
+
+    只记元信息，不记参数值——owner_phone 之类的个人信息不进日志。
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        t0 = time.perf_counter()
+        result = fn(*args, **kwargs)
+        ms = int((time.perf_counter() - t0) * 1000)
+        ok = bool(isinstance(result, dict) and result.get("ok"))
+        logger.info("tool=%s ok=%s code=%s dur=%dms",
+                    fn.__name__, ok, (result or {}).get("code", "-") if not ok else "-", ms)
+        return result
+
+    return wrapper
 
 
 # ============ 宠物工具 ============
 
 @mcp.tool(description="登记一只宠物到病历系统")
+@_traced
 def create_pet(
     name: str,
     species: str,
@@ -50,34 +96,37 @@ def create_pet(
         )
         return _ok(pet)
     except Exception as e:
-        return _err("登记宠物失败", str(e))
+        return _err("登记宠物失败", str(e), code=_classify(e))
 
 
 @mcp.tool(description="按 ID 查询宠物信息")
+@_traced
 def get_pet(pet_id: int) -> dict:
     """按宠物 ID 查询宠物详细信息"""
     try:
         pet = store.get_pet(pet_id)
         if pet is None:
-            return _err("未找到宠物", f"pet_id={pet_id} 不存在")
+            return _err("未找到宠物", f"pet_id={pet_id} 不存在", code=E_NOT_FOUND)
         return _ok(pet)
     except Exception as e:
-        return _err("查询宠物失败", str(e))
+        return _err("查询宠物失败", str(e), code=_classify(e))
 
 
 @mcp.tool(description="列出所有宠物，可按主人姓名过滤")
+@_traced
 def list_pets(owner_name: str | None = None) -> dict:
     """列出宠物列表。owner_name 可选，传入则只返回该主人的宠物"""
     try:
         pets = store.list_pets(owner_name=owner_name)
         return _ok(pets)
     except Exception as e:
-        return _err("列出宠物失败", str(e))
+        return _err("列出宠物失败", str(e), code=_classify(e))
 
 
 # ============ 病历工具 ============
 
 @mcp.tool(description="为宠物创建一条病历记录")
+@_traced
 def create_medical_record(
     pet_id: int,
     visit_date: str,
@@ -99,24 +148,26 @@ def create_medical_record(
         )
         return _ok(record)
     except ValueError as e:
-        return _err("宠物不存在", str(e))
+        return _err("宠物不存在", str(e), code=E_NOT_FOUND)
     except Exception as e:
-        return _err("创建病历失败", str(e))
+        return _err("创建病历失败", str(e), code=_classify(e))
 
 
 @mcp.tool(description="按 ID 查询病历详情")
+@_traced
 def get_medical_record(record_id: int) -> dict:
     """按病历 ID 查询病历详细信息"""
     try:
         record = store.get_medical_record(record_id)
         if record is None:
-            return _err("未找到病历", f"record_id={record_id} 不存在")
+            return _err("未找到病历", f"record_id={record_id} 不存在", code=E_NOT_FOUND)
         return _ok(record)
     except Exception as e:
-        return _err("查询病历失败", str(e))
+        return _err("查询病历失败", str(e), code=_classify(e))
 
 
 @mcp.tool(description="列出病历，可按宠物ID和日期范围过滤")
+@_traced
 def list_medical_records(
     pet_id: int | None = None,
     date_from: str | None = None,
@@ -129,10 +180,11 @@ def list_medical_records(
         )
         return _ok(records)
     except Exception as e:
-        return _err("列出病历失败", str(e))
+        return _err("列出病历失败", str(e), code=_classify(e))
 
 
 @mcp.tool(description="更新病历字段（仅更新传入的字段）")
+@_traced
 def update_medical_record(
     record_id: int,
     visit_date: str | None = None,
@@ -152,22 +204,23 @@ def update_medical_record(
             doctor=doctor,
         )
         if record is None:
-            return _err("未找到病历", f"record_id={record_id} 不存在")
+            return _err("未找到病历", f"record_id={record_id} 不存在", code=E_NOT_FOUND)
         return _ok(record)
     except Exception as e:
-        return _err("更新病历失败", str(e))
+        return _err("更新病历失败", str(e), code=_classify(e))
 
 
 @mcp.tool(description="删除一条病历记录")
+@_traced
 def delete_medical_record(record_id: int) -> dict:
     """按病历 ID 删除病历"""
     try:
         deleted = store.delete_medical_record(record_id)
         if not deleted:
-            return _err("未找到病历", f"record_id={record_id} 不存在")
+            return _err("未找到病历", f"record_id={record_id} 不存在", code=E_NOT_FOUND)
         return _ok({"deleted": True, "record_id": record_id})
     except Exception as e:
-        return _err("删除病历失败", str(e))
+        return _err("删除病历失败", str(e), code=_classify(e))
 
 
 def main() -> None:
