@@ -1,0 +1,87 @@
+{
+  "standard": "GB 2763《食品安全国家标准 食品中农药最大残留限量》",
+  "updated": "2026-11-09",
+  "note": "可维护规则表。verified=false 表示该数值尚未与标准原文核对，只能作为核对清单，不能作为对外判定依据；核对后在 rules 里把 verified 改成 true 并填 source。",
+  "rules": [
+    {
+      "pesticide": "毒死蜱",
+      "aliases": ["chlorpyrifos"],
+      "commodity": "柑橘类水果",
+      "commodity_keys": ["柑橘", "橙", "橘", "柑", "柚", "柠檬"],
+      "mrl": 0.05,
+      "unit": "mg/kg",
+      "verified": false,
+      "source": "",
+      "note": "示例值，需按 GB 2763 柑橘类水果条目核对"
+    },
+    {
+      "pesticide": "克百威",
+      "aliases": ["carbofuran", "呋喃丹"],
+      "commodity": "柑橘类水果",
+      "commodity_keys": ["柑橘", "橙", "橘", "柑", "柚", "柠檬"],
+      "mrl": 0.02,
+      "unit": "mg/kg",
+      "verified": false,
+      "source": "",
+      "note": "示例值，需核对"
+    },
+    {
+      "pesticide": "丙溴磷",
+      "aliases": ["profenofos"],
+      "commodity": "柑橘类水果",
+      "commodity_keys": ["柑橘", "橙", "橘", "柑", "柚", "柠檬"],
+      "mrl": 0.05,
+      "unit": "mg/kg",
+      "verified": false,
+      "source": "",
+      "note": "示例值，需核对"
+    },
+    {
+      "pesticide": "三唑磷",
+      "aliases": ["triazophos"],
+      "commodity": "柑橘类水果",
+      "commodity_keys": ["柑橘", "橙", "橘", "柑", "柚", "柠檬"],
+      "mrl": 0.05,
+      "unit": "mg/kg",
+      "verified": false,
+      "source": "",
+      "note": "示例值，需核对"
+    },
+    {
+      "pesticide": "氧乐果",
+      "aliases": ["omethoate"],
+      "commodity": "柑橘类水果",
+      "commodity_keys": ["柑橘", "橙", "橘", "柑", "柚", "柠檬"],
+      "mrl": 0.02,
+      "unit": "mg/kg",
+      "verified": false,
+      "source": "",
+      "note": "示例值，需核对"
+    },
+    {
+      "pesticide": "多菌灵",
+      "aliases": ["carbendazim"],
+      "commodity": "浆果及其他小型水果",
+      "commodity_keys": ["猕猴桃", "浆果", "草莓", "葡萄"],
+      "mrl": 0.05,
+      "unit": "mg/kg",
+      "verified": false,
+      "source": "",
+      "note": "示例值，需核对"
+    }
+  ],
+  "out_of_scope": [
+    {
+      "name_keys": ["铅", "镉", "砷", "汞", "铬", "锡"],
+      "reason": "重金属属于污染物限量，查 GB 2762，不在 GB 2763 农药残留范围"
+    },
+    {
+      "name_keys": ["菌落总数", "大肠菌群", "霉菌", "酵母", "沙门氏菌", "金黄色葡萄球菌"],
+      "reason": "微生物指标查 GB 29921 及对应产品标准，不在 GB 2763 范围"
+    },
+    {
+      "name_keys": ["糖度", "可溶性固形物", "可滴定酸", "总酸", "硬度", "果径", "横径", "单果", "着色", "可食率"],
+      "reason": "属于品质指标（分级/收购标准），不是食品安全限量"
+    }
+  ]
+}

@@ -1,7 +1,9 @@
 import configparser
 import json
 import locale
+import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -10,6 +12,8 @@ from pathlib import Path
 
 import requests
 import trafilatura
+from rich.cells import cell_len
+from rich.markup import escape as rich_escape
 from textual.app import App, ComposeResult
 from textual.widgets import RichLog, Input, Static, Button
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -225,6 +229,25 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "keyword": {"type": "string", "description": "批次号（如 GX20261020-05）或产品名"},
+                },
+                "required": ["keyword"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "checkResidues",
+            "description": (
+                "限量核对：拿批次档案里的质检明细，逐项比对本地农残限量规则表"
+                "（.agents/agri-data/gb2763-limits.json），给出达标、超标、超范围（重金属/微生物/品质指标）"
+                "与限值待核验四种结果。问「这批农残有没有超标」「能不能放行」时先调本工具，"
+                "不要凭记忆报 MRL 数值"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "批次号（如 SC20261012-01）、产品名或产地关键词"},
                 },
                 "required": ["keyword"],
             },
@@ -1236,6 +1259,7 @@ def run_compaction(messages, window_tokens, notify=lambda text: None):
 # ---------- 农业供应链溯源：示例批次档案与业务工具 ----------
 AGRI_DATA_DIR = (PROJECT_ROOT / ".agents" / "agri-data").resolve()
 AGRI_MAX_OUTPUT = 2600           # 单次工具输出上限，避免一次查询又撑满上下文
+AUDIT_MAX_OUTPUT = 4200          # 冷链审计报告单独放宽：结论必须带完整依据，截断会误导
 TRACE_MAX_BATCHES = 3            # 一次最多展开几个批次
 COLD_RECORD_MAX_GAP_HOURS = 6    # 相邻温控记录超过这个间隔，视为记录缺失（正常按 4~6 小时巡检）
 
@@ -1252,11 +1276,157 @@ def _load_batches():
     return [b for b in data if isinstance(b, dict)]
 
 
-def _clip_output(text):
-    if len(text) <= AGRI_MAX_OUTPUT:
+# ---------- 显示：把模型回复的 Markdown 轻量转成 Rich 标记 ----------
+_MD_HEAD = re.compile(r"^(#{1,6})\s+(.*)$")
+_MD_BULLET = re.compile(r"^(\s*)(?:-\s+|\*\s+)")
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_MD_CODE = re.compile(r"`([^`]+)`")
+_MD_ITALIC = re.compile(r"(?<!\*)\*([^\s*][^*]*?)\*(?!\*)")
+_MD_RULE = re.compile(r"^\s*(?:-{3,}|\*{3,}|—{2,}|─{2,})\s*$")
+_MD_DASH = re.compile(r"^\s*-{2,}\s*")
+
+# Rich 只在空格处断行，中文整句没有空格会被当成一个「词」，宽度不够就整句挪到下一行，
+# 结果项目符号被单独留在上一行（截图里的孤立「•」）。在中文标点后插入发丝空格
+# （U+200A，视觉上几乎不可见）就能在不改内容的前提下提供断行点。
+# 只在「汉字 ↔ 汉字」之间插，绝不能插进 14:00 / 2026-10-20 / GB 2763 这类数字与代号里。
+_SOFT_BREAK = "\u200a"
+_BREAK_AFTER = "。，、；！？…）】」》｜"           # 只认句读与分隔类全角标点；冒号后常见编号，不留缝
+_NO_BREAK_BEFORE = "。，、；：！？）】」》，…"
+_SOFT_EVERY = 16          # 连续多少个汉字没有标点，就补一个断行点（宽 40 列也不至于把符号孤立）
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _with_soft_breaks(text):
+    """在汉字标点后、或连续多个汉字无标点处插入发丝空格，制造换行机会"""
+    if not text or _SOFT_BREAK in text:
         return text
-    return text[:AGRI_MAX_OUTPUT] + (f"\n…（输出已截断，完整内容 {len(text)} 字；"
-                                     f"可加 stage 参数只看某一段）")
+    out, run = [], 0
+    for i, ch in enumerate(text):
+        out.append(ch)
+        if _CJK.match(ch):
+            run += 1
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if not nxt or nxt.isspace() or nxt == _SOFT_BREAK or nxt in _NO_BREAK_BEFORE:
+            continue
+        is_cjk_next = bool(_CJK.match(nxt))
+        if (ch in _BREAK_AFTER and is_cjk_next) or \
+           (run >= _SOFT_EVERY and is_cjk_next and _CJK.match(ch)):
+            out.append(_SOFT_BREAK)
+            run = 0
+    return "".join(out)
+
+
+_TABLE_ROW = re.compile(r"^\s*\|(.+)\|\s*$")
+_TABLE_SEP = re.compile(r"^\s*\|[\s:\-|]+\|\s*$")
+_TABLE_MAX_COL = 30      # 单元格最宽（显示列），超了截断加省略号，防止整行超出窗口
+
+
+def _cell_pad(text, width):
+    return text + " " * max(0, width - cell_len(text))
+
+
+def _format_table(rows):
+    """把 Markdown 管道表格转成对齐的方框字符表格；列宽按显示宽度算（汉字占两列）"""
+    parsed = []
+    for r in rows:
+        if _TABLE_SEP.match(r):
+            continue
+        cells = [c.strip().replace("**", "").replace("`", "")
+                 for c in r.strip().strip("|").split("|")]
+        parsed.append(cells)
+    if not parsed:
+        return []
+    ncol = max(len(r) for r in parsed)
+    widths = []
+    for c in range(ncol):
+        w = max(cell_len(r[c]) if c < len(r) else 0 for r in parsed)
+        widths.append(min(max(w, 2), _TABLE_MAX_COL))
+
+    def row(cells):
+        parts = []
+        for c in range(ncol):
+            cell = cells[c] if c < len(cells) else ""
+            if cell_len(cell) > widths[c]:
+                cut, acc = "", 0
+                for ch in cell:
+                    if acc + cell_len(ch) > widths[c] - 2:
+                        break
+                    cut += ch
+                    acc += cell_len(ch)
+                cell = cut + "…"
+            parts.append(" " + _cell_pad(cell, widths[c]) + " ")
+        return "│" + "│".join(parts) + "│"
+
+    def rule(left, mid, right):
+        return left + mid.join("─" * (widths[c] + 2) for c in range(ncol)) + right
+
+    out = [rule("┌", "┬", "┐"), row(parsed[0]), rule("├", "┼", "┤")]
+    for cells in parsed[1:]:
+        out.append(row(cells))
+    out.append(rule("└", "┴", "┘"))
+    return out
+
+
+def _inline(text):
+    """行内标记：先插断行点、再转义方括号，最后套加粗/代码/斜体"""
+    body = rich_escape(_with_soft_breaks(text))
+    body = _MD_CODE.sub(r"[reverse]\1[/]", body)
+    body = _MD_BOLD.sub(r"[bold]\1[/]", body)
+    return _MD_ITALIC.sub(r"[italic]\1[/]", body)
+
+
+def md_to_rich(text):
+    """把 Markdown 转成 Rich 可渲染的标记，避免 **、###、` 原样显示在 TUI 里
+
+    先给中文长句插断行点，再转义正文里的 [ ]（否则会被 Rich 当成样式标记），
+    最后套自己的标记。覆盖标题/加粗/行内代码/项目符号/斜体/分隔线/管道表格。
+    """
+    if not text:
+        return ""
+    lines = str(text).splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        if _TABLE_ROW.match(raw):
+            block = []
+            while i < len(lines) and _TABLE_ROW.match(lines[i]):
+                block.append(lines[i])
+                i += 1
+            if out and out[-1].strip():
+                out.append("")
+            out.extend(rich_escape(l) for l in _format_table(block))
+            out.append("")
+            continue
+        if _MD_RULE.match(raw):
+            out.append("[dim]" + "─" * 30 + "[/]")
+            i += 1
+            continue
+        head = _MD_HEAD.match(raw)
+        if head:
+            title = _MD_BOLD.sub(r"\1", head.group(2).strip())
+            if out and out[-1].strip():
+                out.append("")
+            out.append(f"[b cyan]{rich_escape(title)}[/]")
+            i += 1
+            continue
+        line = _MD_DASH.sub("", raw)      # 模型爱写的 "-- 小标题" 前缀，去掉更清爽
+        bullet = _MD_BULLET.match(line)
+        prefix = ""
+        if bullet:
+            prefix = bullet.group(1) + "• "
+            line = line[bullet.end():]
+        out.append(prefix + _inline(line))
+        i += 1
+    return "\n".join(out).strip("\n")
+
+
+def _clip_output(text, limit=None):
+    limit = limit or AGRI_MAX_OUTPUT
+    if len(text) <= limit:
+        return text
+    return text[:limit] + (f"\n…（输出已截断，完整内容 {len(text)} 字；"
+                           f"可加 stage 参数只看某一段，或缩小关键词范围）")
 
 
 def _match_batches(keyword):
@@ -1313,9 +1483,25 @@ def _fmt_quality(b):
 def _fmt_cold_chain(b):
     cc = b.get("cold_chain") or {}
     recs = cc.get("records") or []
-    lines = [f"- 冷链：{cc.get('mode', '-')} {cc.get('target_low', '-')}~"
-             f"{cc.get('target_high', '-')}℃，{cc.get('device', '-')}，共 {len(recs)} 条记录"]
+    segments = [s for s in (cc.get("segments") or []) if isinstance(s, dict)]
+    if segments:
+        head = (f"- 冷链：{cc.get('mode', '-')}｜分段控温 {len(segments)} 段，"
+                f"{cc.get('device', '-')}，共 {len(recs)} 条记录")
+        for seg in segments:
+            head += (f"\n    · 段「{seg.get('label', '-')}」"
+                     f"{seg.get('from') or '（不设起点）'} ~ {seg.get('to') or '（不设终点）'}"
+                     f" 限值 {seg.get('target_low', '-')}~{seg.get('target_high', '-')}℃")
+    else:
+        mode = str(cc.get("mode") or "-")
+        rng = f"{cc.get('target_low', '-')}~{cc.get('target_high', '-')}℃"
+        if "℃" in mode:
+            head = f"- 冷链：{mode}｜{cc.get('device', '-')}，共 {len(recs)} 条记录"
+        else:
+            head = f"- 冷链：{mode} {rng}｜{cc.get('device', '-')}，共 {len(recs)} 条记录"
+    lines = [head]
     for r in recs[:12]:
+        if not isinstance(r, dict):
+            continue
         lines.append(f"    · {r.get('time', '-')}  {r.get('temp', '-')}℃  {r.get('place', '-')}")
     if len(recs) > 12:
         lines.append(f"    · 其余 {len(recs) - 12} 条略（要判定是否超限请用 auditColdChain）")
@@ -1364,22 +1550,218 @@ def traceBatch(keyword=None, stage="all", **kwargs):
     return _clip_output(head + "\n\n".join(blocks))
 
 
+_TIME_FORMATS = (
+    "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+    "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+    "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M",
+    "%Y-%m-%d", "%Y/%m/%d",
+)
+
+
 def _parse_record_time(text):
+    """解析温控/节点时间：容忍带秒、T 分隔、斜杠日期、ISO 时区等导出差异；解析失败返回 None
+
+    不再静默丢弃异常格式——上层用返回值区分「没记录」和「有时间但读不懂」。
+    """
+    raw = str(text if text is not None else "").strip()
+    if not raw:
+        return None
     try:
-        return datetime.strptime(str(text).strip(), "%Y-%m-%d %H:%M")
-    except (TypeError, ValueError):
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return dt.replace(tzinfo=None)   # 统一成 naive，避免带时区与不带时区比较报错
+    except ValueError:
+        pass
+    for fmt in _TIME_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _num(value):
+    """把温度、限值这类值转成 float；带 ℃ 等单位或空值返回 None"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = str(value).strip().replace("℃", "").replace("°C", "")
+    try:
+        return float(s)
+    except ValueError:
         return None
 
 
 def _record_temp(record):
-    try:
-        return float(record.get("temp"))
-    except (TypeError, ValueError):
+    return _num((record or {}).get("temp"))
+
+
+def _cold_limits(batch, ts):
+    """取该批次在某一时刻适用的温度区间 (low, high, label)
+
+    有 cold_chain.segments 时按时间分段匹配（支持冷冻干线 + 销地冷藏这类多段控温）；
+    无分段则回退整批 target_low/target_high。时间段之外不猜，返回 (None, None, 说明)。
+    """
+    cc = (batch or {}).get("cold_chain") or {}
+    segments = [s for s in (cc.get("segments") or []) if isinstance(s, dict)]
+    if segments:
+        for seg in segments:
+            start = _parse_record_time(seg.get("from")) if seg.get("from") else None
+            end = _parse_record_time(seg.get("to")) if seg.get("to") else None
+            if (start is None or ts >= start) and (end is None or ts < end):
+                low, high = _num(seg.get("target_low")), _num(seg.get("target_high"))
+                if low is not None and high is not None:
+                    return low, high, (seg.get("label") or "分段区间")
+        return None, None, "未覆盖时段"
+    low, high = _num(cc.get("target_low")), _num(cc.get("target_high"))
+    if low is None or high is None:
+        return None, None, None
+    return low, high, (cc.get("mode") or "整批区间")
+
+
+def _boundary_time(batch, kind):
+    """取链路起（start）/止（end）的时间点，返回 (datetime, 原文, 是否含时分)
+
+    「是否含时分」用来避免拿只有日期的字段（00:00）去做小时级衔接判定，造成误报。
+    """
+    harvest = batch.get("harvest") or {}
+    packing = batch.get("packing") or {}
+    logistics = batch.get("logistics") or {}
+    if kind == "start":
+        candidates = [harvest.get("start_time"), harvest.get("date"),
+                      logistics.get("ship_date"), packing.get("date")]
+    else:
+        candidates = [logistics.get("arrive"), logistics.get("arrive_date")]
+    for v in candidates:
+        ts = _parse_record_time(v)
+        if ts is None:
+            continue
+        return ts, str(v), (":" in str(v))
+    return None, "", False
+
+
+# ---------- 累计暴露 / MKT：把「几个采样点超温」变成「超了多久、平均动力学温度多少」 ----------
+
+MKT_DH_OVER_R = 10000.0   # K。ICH Q1A 常用值（活化能 83.144 kJ/mol 对应 ΔH/R）
+
+
+def _over_margin(temp, low, high, bound):
+    """返回超出程度（>0 表示超出该侧界限），bound 取 high/low"""
+    return (temp - high) if bound == "high" else (low - temp)
+
+
+def _exposure_hours(recs, bound="high"):
+    """按相邻记录线性插值，估算超出上限/低于下限的累计小时数
+
+    返回 (累计小时, 近似区间数, 缺口小时)。约定：
+    - 两端限值相同：按两点温度线性插值找穿越时刻，只有穿越前/后那段计入；
+    - 跨段或限值缺失：不做插值，按两端各自状态各计一半，并计入「近似区间」；
+    - 间隔超过 COLD_RECORD_MAX_GAP_HOURS 的区间无记录，无法证明受控，只累加到缺口小时。
+    """
+    total = approx = gap_hours = 0.0
+    for prev, cur in zip(recs, recs[1:]):
+        hours = (cur["ts"] - prev["ts"]).total_seconds() / 3600
+        if hours <= 0:
+            continue
+        if hours > COLD_RECORD_MAX_GAP_HOURS:
+            gap_hours += hours
+            continue
+        if None in (prev["low"], prev["high"], cur["low"], cur["high"]):
+            continue
+        if (prev["low"], prev["high"]) == (cur["low"], cur["high"]):
+            limit = prev["high"] if bound == "high" else prev["low"]
+            a = _over_margin(prev["temp"], prev["low"], prev["high"], bound)
+            b = _over_margin(cur["temp"], cur["low"], cur["high"], bound)
+            if a >= 0 and b >= 0:
+                total += hours
+            elif a >= 0 > b:
+                total += hours * (a / (a - b))
+            elif a < 0 <= b:
+                total += hours * (b / (b - a))
+        else:
+            approx += 1
+            for rec, lo, hi in ((prev, prev["low"], prev["high"]), (cur, cur["low"], cur["high"])):
+                if _over_margin(rec["temp"], lo, hi, bound) >= 0:
+                    total += hours / 2
+    return total, int(approx), gap_hours
+
+
+def _mkt_celsius(temps):
+    """平均动力学温度 MKT（℃，ICH Q1A 公式，ΔH/R=10000K）；样本为空返回 None"""
+    kelvin = [t + 273.15 for t in temps if t is not None and t + 273.15 > 0]
+    if not kelvin:
         return None
+    mean_exp = sum(math.exp(-MKT_DH_OVER_R / k) for k in kelvin) / len(kelvin)
+    if mean_exp <= 0:
+        return None
+    return MKT_DH_OVER_R / (-math.log(mean_exp)) - 273.15
+
+
+def _parse_measure(text):
+    """把质检数值解析成 float，并返回原样与说明
+
+    支持：0.02 / ＜10 / ≤0.05 / 未检出 / 8.0×10³ / 1.2e3。
+    ＜10 这种只给上界的写法返回该上界，并标记「上界」，比较时按保守口径处理。
+    """
+    raw = str(text if text is not None else "").strip()
+    if not raw:
+        return None, ""
+    if raw in ("未检出", "ND", "nd", "未检测出"):
+        return 0.0, "未检出（按 0 计）"
+    body = (raw.replace("≤", "").replace("<", "").replace("＜", "")
+               .replace("≦", "").replace("mg/kg", "").replace("CFU/g", "").strip())
+    upper_bound = ("＜" in raw) or ("<" in raw)
+    body = body.replace("×10³", "e3").replace("×10⁴", "e4").replace("×10⁵", "e5")
+    body = body.replace("×106", "e6").replace("*10^", "e")
+    try:
+        return float(body), ("上界值" if upper_bound else "")
+    except ValueError:
+        return None, f"无法解析「{raw}」"
+
+
+def _load_limit_table():
+    """读取农残限量规则表 .agents/agri-data/gb2763-limits.json；缺失或损坏返回空表"""
+    path = AGRI_DATA_DIR / "gb2763-limits.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"rules": [], "out_of_scope": [], "standard": "", "note": "规则表缺失，需人工核对"}
+    if not isinstance(data, dict):
+        return {"rules": [], "out_of_scope": [], "standard": "", "note": "规则表格式异常"}
+    data.setdefault("rules", [])
+    data.setdefault("out_of_scope", [])
+    return data
+
+
+def _match_limit_rule(item_name, batch, table):
+    """按「项目名 + 产品类别」找规则：项目名命中药名/别名，且产品名或类别命中适用作物"""
+    name = str(item_name or "")
+    hay = f"{batch.get('product', '')} {batch.get('category', '')}"
+    for rule in table.get("rules") or []:
+        if not isinstance(rule, dict):
+            continue
+        keys = [rule.get("pesticide", "")] + list(rule.get("aliases") or [])
+        if not any(k and k in name for k in keys):
+            continue
+        ckeys = list(rule.get("commodity_keys") or [])
+        if ckeys and not any(ck and ck in hay for ck in ckeys):
+            continue
+        return rule
+    return None
+
+
+def _match_out_of_scope(item_name, table):
+    name = str(item_name or "")
+    for grp in table.get("out_of_scope") or []:
+        if not isinstance(grp, dict):
+            continue
+        if any(k and k in name for k in (grp.get("name_keys") or [])):
+            return grp
+    return None
 
 
 def auditColdChain(keyword=None, **kwargs):
-    """按批次规定的温度区间逐条判定温控记录，给出超限时段、峰值、记录空缺与结论"""
+    """按批次温度区间（支持分段）逐条判定温控记录：超限时段、峰值、记录缺口、首末衔接与结论"""
     batches = _match_batches(keyword)
     if not batches:
         return (f"没有匹配「{keyword}」的批次档案，无法核查冷链。"
@@ -1387,59 +1769,247 @@ def auditColdChain(keyword=None, **kwargs):
     reports = []
     for b in batches[:TRACE_MAX_BATCHES]:
         cc = b.get("cold_chain") or {}
-        low, high = cc.get("target_low"), cc.get("target_high")
-        recs = [r for r in (cc.get("records") or []) if _parse_record_time(r.get("time"))]
-        if not recs or low is None or high is None:
-            reports.append(f"【{b.get('batch_id', '-')}】温控记录或温度区间缺失，需人工核实。")
+        raw_recs = [r for r in (cc.get("records") or []) if isinstance(r, dict)]
+        recs, bad_time, bad_temp, out_of_zone = [], 0, 0, 0
+        for r in raw_recs:
+            ts = _parse_record_time(r.get("time"))
+            if ts is None:
+                bad_time += 1
+                continue
+            temp = _record_temp(r)
+            if temp is None:
+                bad_temp += 1
+                continue
+            low, high, label = _cold_limits(b, ts)
+            if low is None or high is None:
+                out_of_zone += 1
+            recs.append({"ts": ts, "temp": temp, "raw": r,
+                         "low": low, "high": high, "label": label})
+        if not recs:
+            reports.append(
+                f"【{b.get('batch_id', '-')}】温控记录全部无法使用"
+                f"（原始 {len(raw_recs)} 条，其中时间无法解析 {bad_time} 条、"
+                f"温度缺失 {bad_temp} 条），需人工核实。")
             continue
-        over = [r for r in recs if _record_temp(r) is not None
-                and (_record_temp(r) > high or _record_temp(r) < low)]
+
+        out_of_order = any(recs[i]["ts"] > recs[i + 1]["ts"] for i in range(len(recs) - 1))
+        if out_of_order:
+            recs.sort(key=lambda x: x["ts"])
+
+        over = [x for x in recs
+                if x["low"] is not None and (x["temp"] > x["high"] or x["temp"] < x["low"])]
+        segments = []
+        for x in over:
+            if segments:
+                last = segments[-1][-1]
+                hours = (x["ts"] - last["ts"]).total_seconds() / 3600
+                if hours <= COLD_RECORD_MAX_GAP_HOURS and last["label"] == x["label"]:
+                    segments[-1].append(x)
+                    continue
+            segments.append([x])
+
         gaps = []
         for prev, cur in zip(recs, recs[1:]):
-            hours = (_parse_record_time(cur["time"]) - _parse_record_time(prev["time"])).total_seconds() / 3600
+            hours = (cur["ts"] - prev["ts"]).total_seconds() / 3600
             if hours > COLD_RECORD_MAX_GAP_HOURS:
-                gaps.append(f"{prev['time']} → {cur['time']}（间隔 {hours:.1f} 小时）")
-        segments = []
-        for r in over:
-            if segments:
-                last = _parse_record_time(segments[-1][-1]["time"])
-                now = _parse_record_time(r["time"])
-                if (now - last).total_seconds() / 3600 <= COLD_RECORD_MAX_GAP_HOURS:
-                    segments[-1].append(r)
-                    continue
-            segments.append([r])
+                gaps.append((prev["raw"].get("time"), cur["raw"].get("time"), hours))
 
-        def _dev(r):
-            t = _record_temp(r)
-            return t - high if t > high else low - t
+        boundary = []
+        start_ts, start_txt, start_precise = _boundary_time(b, "start")
+        if start_ts is not None and start_precise:
+            head = (recs[0]["ts"] - start_ts).total_seconds() / 3600
+            if head > COLD_RECORD_MAX_GAP_HOURS:
+                boundary.append(f"起点 {start_txt} 到首条记录 {recs[0]['raw'].get('time')}"
+                                f" 间隔 {head:.1f} 小时，开头无温控记录")
+            elif head < -1:
+                boundary.append(f"首条记录早于起点 {start_txt} {-head:.1f} 小时（时间疑似录错）")
+        end_ts, end_txt, end_precise = _boundary_time(b, "end")
+        if end_ts is not None and end_precise:
+            tail = (end_ts - recs[-1]["ts"]).total_seconds() / 3600
+            if tail > COLD_RECORD_MAX_GAP_HOURS:
+                boundary.append(f"末条记录 {recs[-1]['raw'].get('time')} 到到货 {end_txt}"
+                                f" 间隔 {tail:.1f} 小时，收尾无温控记录")
+            elif tail < -1:
+                boundary.append(f"末条记录晚于到货时间 {end_txt} {-tail:.1f} 小时（时间疑似录错）")
 
-        lines = [f"【{b.get('batch_id', '-')}】{b.get('product', '-')}｜规定区间 "
-                 f"{low}~{high}℃｜有效记录 {len(recs)} 条"]
-        if over:
-            peak = max(over, key=_dev)
-            lines.append(f"- 温控判定：不合格，{len(over)}/{len(recs)} 条记录超出区间")
-            for seg in segments:
-                lines.append(f"- 超限时段：{seg[0]['time']} ~ {seg[-1]['time']}，"
-                             f"地点 {seg[0].get('place', '-')}，共 {len(seg)} 条")
-                for r in seg:
-                    lines.append(f"    · {r['time']}  {r.get('temp')}℃")
-            lines.append(f"- 峰值：{peak['time']} {peak.get('temp')}℃（超出区间 {_dev(peak):.1f}℃）")
+        seg_specs = [s for s in (cc.get("segments") or []) if isinstance(s, dict)]
+        if seg_specs:
+            limit_desc = f"分段控温 {len(seg_specs)} 段"
         else:
-            lines.append("- 温控判定：所有实测温度都在区间内")
-        if gaps:
-            lines.append(f"- 记录空缺（超过 {COLD_RECORD_MAX_GAP_HOURS} 小时无记录，"
-                         f"无法证明全程受控）：")
-            for g in gaps:
-                lines.append(f"    · {g}")
+            limit_desc = (f"规定区间 {_num(cc.get('target_low'))}~"
+                          f"{_num(cc.get('target_high'))}℃")
+
+        lines = [f"【{b.get('batch_id', '-')}】{b.get('product', '-')}｜{limit_desc}｜"
+                 f"有效记录 {len(recs)}/{len(raw_recs)} 条"]
+        for seg in seg_specs:
+            lines.append(f"- 段「{seg.get('label', '-')}」"
+                         f"{seg.get('from') or '（不设起点）'} ~ {seg.get('to') or '（不设终点）'}"
+                         f" 限值 {seg.get('target_low', '-')}~{seg.get('target_high', '-')}℃")
         if over:
-            verdict = "不合格：存在超温时段，建议复核装卸与暂存环节并评估该批货品质"
-        elif gaps:
-            verdict = "待补充：温度未超限但记录不连续，需补齐温控记录后方可放行"
+            lines.append(f"- 温控判定：不合格，{len(over)}/{len(recs)} 条记录超出所在区间")
+            for seg in segments:
+                lines.append(f"- 超限时段：{seg[0]['raw'].get('time')} ~ {seg[-1]['raw'].get('time')}"
+                             f"（段「{seg[0]['label'] or '-'}」，"
+                             f"地点 {seg[0]['raw'].get('place', '-')}，共 {len(seg)} 条）")
+                for x in seg:
+                    lines.append(f"    · {x['raw'].get('time')}  {x['temp']}℃"
+                                 f"（区间 {x['low']}~{x['high']}）")
+            peak = max(over, key=lambda x: (x["temp"] - x["high"]) if x["temp"] > x["high"]
+                       else (x["low"] - x["temp"]))
+            if peak["temp"] > peak["high"]:
+                dev, rel = peak["temp"] - peak["high"], "高于区间上限"
+            else:
+                dev, rel = peak["low"] - peak["temp"], "低于区间下限"
+            lines.append(f"- 峰值偏离：{peak['raw'].get('time')} {peak['temp']}℃"
+                         f"（{rel} {dev:.1f}℃）")
+        else:
+            lines.append("- 温控判定：所有实测温度都在各自区间内")
+
+        exp_high, approx_high, gap_high = _exposure_hours(recs, "high")
+        exp_low, approx_low, gap_low = _exposure_hours(recs, "low")
+        parts = []
+        if exp_high > 0:
+            parts.append(f"高于上限累计 {exp_high:.1f} 小时")
+        if exp_low > 0:
+            parts.append(f"低于下限累计 {exp_low:.1f} 小时")
+        if not parts:
+            parts.append("超限累计 0 小时")
+        exp_line = "- 累计暴露：" + "；".join(parts)
+        if gap_high > 0:
+            exp_line += f"（缺记录 {gap_high:.1f} 小时未计入，实际暴露可能更长）"
+        approx_n = max(approx_high, approx_low)
+        if approx_n and (exp_high > 0 or exp_low > 0):
+            exp_line += f"（其中 {approx_n} 个跨段区间按两端各半估算）"
+        lines.append(exp_line)
+
+        if seg_specs:
+            groups = {}
+            for x in recs:
+                groups.setdefault(x["label"] or "-", []).append(x["temp"])
+            for label, temps in groups.items():
+                m = _mkt_celsius(temps)
+                if m is not None:
+                    lines.append(f"- MKT（段「{label}」）：{m:.1f}℃")
+            lines.append("- MKT 说明：分段控温批次按段分别计算，不输出全局值"
+                         "（冷冻段与冷藏段混算没有物理意义）")
+        else:
+            mkt = _mkt_celsius([x["temp"] for x in recs])
+            if mkt is not None:
+                known_highs = [x["high"] for x in recs if x["high"] is not None]
+                flag = "，高于规定上限" if known_highs and mkt > max(known_highs) else ""
+                lines.append(f"- MKT：{mkt:.1f}℃{flag}"
+                             f"（平均动力学温度，ΔH/R=10000K，参考指标，不作合格判定依据）")
+
+        if gaps:
+            lines.append(f"- 记录空缺（超过 {COLD_RECORD_MAX_GAP_HOURS} 小时无记录）：")
+            for a, c, h in gaps:
+                lines.append(f"    · {a} → {c}（间隔 {h:.1f} 小时）")
+        if boundary:
+            lines.append("- 首末衔接：")
+            for t in boundary:
+                lines.append(f"    · {t}")
+
+        integrity = []
+        if bad_time:
+            integrity.append(f"{bad_time} 条记录时间无法识别（未纳入判定）")
+        if bad_temp:
+            integrity.append(f"{bad_temp} 条记录温度值缺失或非数字（未纳入判定）")
+        if out_of_zone:
+            integrity.append(f"{out_of_zone} 条记录落在所有分段之外，无法归属区间（未纳入判定）")
+        if out_of_order:
+            integrity.append("记录时间顺序倒置，已按时间排序后再判定")
+        if integrity:
+            lines.append("- 数据完整性：" + "；".join(integrity))
+
+        if over:
+            verdict = ("不合格：存在超温时段，建议复核装卸与暂存环节、评估该批货品质，"
+                       "并视情冻结流向、追溯用药记录")
+        elif gaps or boundary:
+            verdict = ("待补充：温度未超限但记录不连续，无法证明全程受控，"
+                       "补齐温控记录后方可放行")
+        elif integrity:
+            verdict = "待补充：有记录无法纳入判定，需人工核实原始记录后再放行"
         else:
             verdict = "合格：全程受控，可正常放行"
         lines.append(f"- 结论：{verdict}")
+        lines.append("- 依据说明：限值取自批次档案中的示例值，非权威标准；"
+                     "对外报送或执法引用前需核对 GB 2763 等现行限量")
         reports.append("\n".join(lines))
-    return _clip_output("\n\n".join(reports))
+    return _clip_output("\n\n".join(reports), AUDIT_MAX_OUTPUT)
+
+
+def checkResidues(keyword=None, **kwargs):
+    """农残/限量核对：用本地规则表逐项核对批次质检数据，区分达标、超标、超范围与限值待核验"""
+    batches = _match_batches(keyword)
+    if not batches:
+        return (f"没有匹配「{keyword}」的批次档案，无法核对限量。"
+                f"可先用 traceBatch 查询可用批次。")
+    table = _load_limit_table()
+    rules = [r for r in (table.get("rules") or []) if isinstance(r, dict)]
+    verified_n = sum(1 for r in rules if r.get("verified"))
+    reports = []
+    for b in batches[:TRACE_MAX_BATCHES]:
+        q = b.get("quality") or {}
+        items = [it for it in (q.get("items") or []) if isinstance(it, dict)]
+        lines = [f"【{b.get('batch_id', '-')}】{b.get('product', '-')}｜{b.get('category', '-')}｜"
+                 f"质检结论「{q.get('conclusion', '-')}」"
+                 f"（{q.get('lab', '-')} {q.get('inspection_date', '-')}）"]
+        if not items:
+            lines.append("- 档案没有质检明细，无法逐项核对限量")
+            reports.append("\n".join(lines))
+            continue
+
+        ok_n = over_n = pending_n = scope_n = 0
+        for it in items:
+            name = str(it.get("name", "-"))
+            shown = f"{it.get('value', '-')}{it.get('unit', '')}"
+            value, vnote = _parse_measure(it.get("value"))
+            rule = _match_limit_rule(name, b, table)
+            scope = _match_out_of_scope(name, table)
+            if rule and value is not None and _num(rule.get("mrl")) is not None:
+                mrl = _num(rule.get("mrl"))
+                unit = rule.get("unit") or ""
+                cmp_txt = "低于" if value <= mrl else "高于"
+                head = (f"    · {name} 实测 {shown}｜规则限值 {mrl}{unit}"
+                        f"（{rule.get('commodity', '-')}），{cmp_txt}限值")
+                if value > mrl:
+                    lines.append(head + " → 超标")
+                    over_n += 1
+                elif it.get("ok") is False:
+                    lines.append(head + " → 达标，但档案标记超标（口径冲突，需人工裁定）")
+                    pending_n += 1
+                elif rule.get("verified"):
+                    lines.append(head + " → 达标")
+                    ok_n += 1
+                else:
+                    lines.append(head + " → 未超标，但该限值 verified=false 未核验")
+                    pending_n += 1
+            elif scope:
+                lines.append(f"    · {name} 实测 {shown} → 不在本规则表范围："
+                             f"{scope.get('reason', '')}")
+                scope_n += 1
+            else:
+                reason = vnote or "规则表无此项目"
+                lines.append(f"    · {name} 实测 {shown} → 无法核对（{reason}），需查标准原文")
+                pending_n += 1
+
+        if over_n:
+            verdict = f"不合格：{over_n} 项超过规则表限值，建议冻结该批次流向并追溯用药记录"
+        elif pending_n:
+            verdict = (f"需核对：{pending_n} 项不能按现有规则表下结论"
+                       f"（限值未核验 / 无对应限值 / 口径冲突），不能直接放行")
+        elif ok_n:
+            verdict = f"合格：{ok_n} 项处于已核验限值内"
+        else:
+            verdict = "无法判定：该批次质检项均不在 GB 2763 范围，需按对应标准（GB 2762 / GB 29921 / 产品标准）判定"
+        lines.append(f"- 结论：{verdict}")
+        if scope_n:
+            lines.append(f"- 不属本范围：{scope_n} 项（重金属/微生物/品质指标），GB 2763 不适用，需另行判定")
+        lines.append(f"- 依据说明：{table.get('standard') or '规则表标准名缺失'}｜"
+                     f"规则表共 {len(rules)} 条，已核验 {verified_n} 条"
+                     f"{'' if verified_n else '（当前 0 条已核验，报告只能当核对清单）'}")
+        reports.append("\n".join(lines))
+    return _clip_output("\n\n".join(reports), AUDIT_MAX_OUTPUT)
 
 
 TOOL_HANDLERS = {
@@ -1451,6 +2021,7 @@ TOOL_HANDLERS = {
     "recallContext": recallContext,
     "traceBatch": traceBatch,
     "auditColdChain": auditColdChain,
+    "checkResidues": checkResidues,
     "makePpt": makePpt,
 }
 
@@ -1576,9 +2147,14 @@ def build_system_prompt():
         "采收与预冷、分级打包、质检项目、冷链、承运路线与下游流向。"
         "不要凭印象编造批次号、检测值、客户名。\n"
         "2. 冷链合规：是否断链、是否超温一律用 auditColdChain 判定，不要自己目测温度记录下结论；"
-        "出现记录空缺时，要明确指出「无法证明全程受控」。\n"
-        "3. 时效与规范：农残限量、检疫要求、追溯管理办法等硬指标用 searchWeb 查最新标准或政策，"
-        "必要时用 fetchWeb 读正文，回答里说明依据来源；查不到就说查不到。\n"
+        "出现记录空缺、首末记录与采收/到货时间脱节、或有记录无法解析时，"
+        "要明确指出「无法证明全程受控」，不能直接判合格。"
+        "批次可配分段限值（cold_chain.segments），如冷冻干线 -20~-15℃ 加销地冷藏 0~4℃，"
+        "判定会按记录时间自动落到对应区间。\n"
+        "3. 限量核对：农残是否超标先用 checkResidues 对本地规则表核一遍；"
+        "规则表里 verified=false 或查不到对应限值时，再用 searchWeb 查 GB 2763 原文，"
+        "回答里说明依据来源；查不到就说查不到，不要凭记忆报 MRL 数值。"
+        "检疫要求、追溯管理办法等政策类问题仍走 searchWeb + fetchWeb。\n"
         "4. 其他工具：getDate 取本机时间，RunCli 执行本地命令行程序，loadSkill 按需加载技能说明。\n"
         "回答要求：先给结论（合格 / 不合格 / 需复核），再给依据和数据；"
         "涉及流向时列明下游客户与数量；发现质检不合格时，提示冻结该批次流向并追溯用药记录。\n"
@@ -2135,7 +2711,7 @@ class ChatApp(App):
                     on_text=lambda t: chunks.append(t),
                 )
                 if answer:
-                    w(f"[b blue]LAgent[/]\n{answer}")
+                    w(f"[b blue]LAgent[/]\n{md_to_rich(answer)}")
                 self.messages.append(
                     {"role": "assistant", "content": answer or None, "tool_calls": calls}
                     if calls
@@ -2170,7 +2746,7 @@ class ChatApp(App):
                         result = f"{err}，请重新调用该工具并传入正确参数"
                     ms = int((time.time() - t0) * 1000)
                     w(f"[dim]▸ 工具 {name} · {ms} ms[/]")
-                    w(clip_output(result))
+                    w(md_to_rich(clip_output(result)))
                     self.messages.append(
                         {"role": "tool", "tool_call_id": call["id"],
                          "content": str(result)}
